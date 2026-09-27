@@ -35,6 +35,14 @@ const PHASE_COLOR: Record<string, string> = {
 
 const WEEKDAY_LABEL = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"];
 
+const CATEGORY_COLOR: Record<string, string> = {
+  general: "#757575",
+  hogar: "#8d6e63",
+  "colegio-deberes": "#0288d1",
+  "colegio-trabajo": "#7b1fa2",
+  puntual: "#ef6c00",
+};
+
 function parseISO(d: string): Date {
   return new Date(d + "T00:00:00");
 }
@@ -89,6 +97,7 @@ export default function Calendario() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sessionDate, setSessionDate] = useState<string | null>(null);
+  const [openDay, setOpenDay] = useState<string | null>(null);
   const [subjects, setSubjects] = useState<{ id: number; name: string }[]>([]);
 
   // Poblar subjects solo si hay exámenes (diálogo adelantar)
@@ -245,8 +254,7 @@ export default function Calendario() {
               firstDay={monthRange(anchor).firstDay}
               daysInMonth={monthRange(anchor).daysInMonth}
               today={todayISO()}
-              onToggleTask={toggleTask}
-              onTogglePlan={togglePlan}
+              onOpenDay={setOpenDay}
               onAddSession={setSessionDate}
             />
           ) : (
@@ -268,7 +276,59 @@ export default function Calendario() {
         onClose={() => setSessionDate(null)}
         onAdd={(sid, phase) => void addSessionCallback(sid, phase)}
       />
+
+      <DayDialog
+        date={openDay}
+        day={openDay ? (data?.days[openDay] ?? { tasks: [], plan: [] }) : null}
+        onClose={() => setOpenDay(null)}
+        onToggleTask={toggleTask}
+        onTogglePlan={togglePlan}
+        onAddSession={(iso) => {
+          setOpenDay(null);
+          setSessionDate(iso);
+        }}
+      />
     </Box>
+  );
+}
+
+/** Detalle de un dia concreto, al tocarlo en la vista de mes. */
+function DayDialog({
+  date,
+  day,
+  onClose,
+  onToggleTask,
+  onTogglePlan,
+  onAddSession,
+}: {
+  date: string | null;
+  day: CalendarDay | null;
+  onClose: () => void;
+  onToggleTask: (t: CalendarTask, dateISO: string, done: boolean) => Promise<void>;
+  onTogglePlan: (examId: number, dateISO: string, status: "done" | "skip" | null) => Promise<void>;
+  onAddSession: (dateISO: string) => void;
+}) {
+  return (
+    <Dialog open={date !== null} onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle sx={{ textTransform: "capitalize" }}>
+        {date ? fmtTitle(parseISO(date)) : ""}
+      </DialogTitle>
+      <DialogContent>
+        {day ? (
+          <DayCell
+            dayISO={date as string}
+            day={day}
+            today=""
+            onToggleTask={onToggleTask}
+            onTogglePlan={onTogglePlan}
+            onAddSession={onAddSession}
+          />
+        ) : null}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Cerrar</Button>
+      </DialogActions>
+    </Dialog>
   );
 }
 
@@ -276,7 +336,6 @@ function DayCell({
   dayISO,
   day,
   today,
-  compact,
   onToggleTask,
   onTogglePlan,
   onAddSession,
@@ -284,29 +343,28 @@ function DayCell({
   dayISO: string;
   day: CalendarDay;
   today: string;
-  compact?: boolean;
   onToggleTask: (t: CalendarTask, dateISO: string, done: boolean) => Promise<void>;
   onTogglePlan: (examId: number, dateISO: string, status: "done" | "skip" | null) => Promise<void>;
   onAddSession: (dateISO: string) => void;
 }) {
   const date = parseISO(dayISO);
   const isToday = dayISO === today;
+  // Sin altura fija ni scroll: la celda crece con su contenido y el scroll
+  // lo lleva la pagina, no una caja dentro de otra.
   const cellSx: SxProps = {
     border: 1,
     borderColor: isToday ? "primary.main" : "divider",
     borderRadius: 1,
     p: 0.5,
-    minHeight: compact ? 90 : 150,
     bgcolor: isToday ? "primary.light" : "background.paper",
     display: "flex",
     flexDirection: "column",
     gap: 0.25,
-    overflow: "auto",
   };
   const header = (
     <Stack direction="row" spacing={0.5} alignItems="center">
       <Typography variant="caption" sx={{ fontWeight: isToday ? 700 : 400 }}>
-        {compact ? date.getDate() : `${WEEKDAY_LABEL[(date.getDay() + 6) % 7]} ${date.getDate()}`}
+        {`${WEEKDAY_LABEL[(date.getDay() + 6) % 7]} ${date.getDate()}`}
       </Typography>
       <Button size="small" sx={{ ml: "auto", minWidth: 0, p: 0 }} onClick={() => onAddSession(dayISO)}>
         +
@@ -314,7 +372,7 @@ function DayCell({
     </Stack>
   );
   return (
-    <Box sx={cellSx}>
+    <Box data-dia={dayISO} sx={cellSx}>
       {header}
       {day.plan.map((p, i) => (
         <Chip
@@ -362,21 +420,108 @@ function DayCell({
   );
 }
 
+/** Cuantos indicadores caben en una celda de mes sin que se partan en dos lineas. */
+const MAX_DOTS = 4;
+
+/**
+ * Celda del mes: altura fija y sin scroll. Solo el numero del dia y un punto
+ * de color por cada cosa pendiente, asi el mes se lee de un vistazo. El
+ * detalle vive en el dialogo al tocar el dia.
+ */
+function MonthCell({
+  dayISO,
+  day,
+  today,
+  onOpenDay,
+  onAddSession,
+}: {
+  dayISO: string;
+  day: CalendarDay;
+  today: string;
+  onOpenDay: (dateISO: string) => void;
+  onAddSession: (dateISO: string) => void;
+}) {
+  const isToday = dayISO === today;
+  const items = [
+    ...day.plan.map((p) => ({ color: p.status === "done" ? "#bdbdbd" : (PHASE_COLOR[p.phase] ?? "#757575"), done: p.status === "done" })),
+    ...day.tasks.map((t) => ({ color: CATEGORY_COLOR[t.category] ?? "#757575", done: t.done })),
+  ];
+  const shown = items.slice(0, MAX_DOTS);
+  const rest = items.length - shown.length;
+
+  return (
+    <Box
+      data-date={dayISO}
+      onClick={() => onOpenDay(dayISO)}
+      sx={{
+        height: 62,
+        border: 1,
+        borderColor: isToday ? "primary.main" : "divider",
+        borderRadius: 1,
+        p: 0.5,
+        bgcolor: isToday ? "primary.light" : "background.paper",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        cursor: "pointer",
+        "&:hover": { borderColor: "primary.main" },
+      }}
+    >
+      <Stack direction="row" alignItems="center" sx={{ minHeight: 18 }}>
+        <Typography variant="caption" sx={{ fontWeight: isToday ? 700 : 400, lineHeight: 1.2 }}>
+          {parseISO(dayISO).getDate()}
+        </Typography>
+        <Button
+          size="small"
+          aria-label="Registrar sesión"
+          sx={{ ml: "auto", minWidth: 0, p: 0, lineHeight: 1 }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onAddSession(dayISO);
+          }}
+        >
+          +
+        </Button>
+      </Stack>
+
+      {shown.length > 0 && (
+        <Stack direction="row" spacing={0.25} sx={{ mt: 0.25, flexWrap: "wrap" }}>
+          {shown.map((it, i) => (
+            <Box
+              key={i}
+              sx={{
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                bgcolor: it.color,
+                opacity: it.done ? 0.45 : 1,
+              }}
+            />
+          ))}
+          {rest > 0 && (
+            <Typography variant="caption" sx={{ fontSize: 9, lineHeight: 1, color: "text.secondary" }}>
+              +{rest}
+            </Typography>
+          )}
+        </Stack>
+      )}
+    </Box>
+  );
+}
+
 function MonthGrid({
   days,
   firstDay,
   daysInMonth,
   today,
-  onToggleTask,
-  onTogglePlan,
+  onOpenDay,
   onAddSession,
 }: {
   days: Record<string, CalendarDay>;
   firstDay: Date;
   daysInMonth: number;
   today: string;
-  onToggleTask: (t: CalendarTask, dateISO: string, done: boolean) => Promise<void>;
-  onTogglePlan: (examId: number, dateISO: string, status: "done" | "skip" | null) => Promise<void>;
+  onOpenDay: (dateISO: string) => void;
   onAddSession: (dateISO: string) => void;
 }) {
   const first = firstDay;
@@ -389,7 +534,7 @@ function MonthGrid({
     <Stack spacing={0.5}>
       <Stack direction="row" spacing={0.5}>
         {WEEKDAY_LABEL.map((w) => (
-          <Box key={w} sx={{ flex: 1, textAlign: "center" }}>
+          <Box key={w} sx={{ flex: 1, textAlign: "center", minWidth: 0 }}>
             <Typography variant="caption" color="text.secondary">
               {w}
             </Typography>
@@ -401,18 +546,16 @@ function MonthGrid({
           {cells.slice(row * 7, row * 7 + 7).map((iso, i) =>
             iso ? (
               <Box key={iso} sx={{ flex: 1, minWidth: 0 }}>
-                <DayCell
+                <MonthCell
                   dayISO={iso}
                   day={days[iso] ?? { tasks: [], plan: [] }}
                   today={today}
-                  compact
-                  onToggleTask={onToggleTask}
-                  onTogglePlan={onTogglePlan}
+                  onOpenDay={onOpenDay}
                   onAddSession={onAddSession}
                 />
               </Box>
             ) : (
-              <Box key={`empty-${row}-${i}`} sx={{ flex: 1 }} />
+              <Box key={`empty-${row}-${i}`} sx={{ flex: 1, minWidth: 0, height: 62 }} />
             ),
           )}
         </Stack>
