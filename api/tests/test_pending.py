@@ -1,15 +1,13 @@
-"""Tests del listado global de pendientes y marcado masivo (Roadmap paso 7)."""
+﻿"""Tests del listado global de pendientes y marcado masivo (Roadmap paso 7)."""
 
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+from conftest import make_session_factory
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
 
 from app import models  # noqa: F401 - registra todas las tablas
-from app.db import Base
 from app.models.task import Task, TaskCompletion
 from app.models.user import User
 from app.services.pending import bulk_complete, pending_items
@@ -20,14 +18,8 @@ FIRST = datetime(2026, 9, 1, tzinfo=UTC)  # ancla de tareas del 1 de septiembre
 
 
 async def _session():
-    engine = create_async_engine(
-        "sqlite+aiosqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    return async_sessionmaker(engine, expire_on_commit=False)
+    maker = await make_session_factory()
+    return maker
 
 
 async def _seed(db, user_id: int, **kw) -> int:
@@ -149,7 +141,7 @@ async def test_bulk_complete_marca_todo_y_recalcula_cursor():
 
 
 async def test_bulk_calendario_atrasada_se_consume_con_su_fecha():
-    # Ejemplo clave del planteamiento: "polvo" toca el lunes, falla el lunes →
+    # Ejemplo clave del planteamiento: "polvo" toca el lunes, falla el lunes â†’
     # pendiente el resto de la semana; marcarla el domingo consume el lunes y el
     # siguiente vuelve a ser el lunes que viene (sin perder ni adelantar).
     maker = await _session()

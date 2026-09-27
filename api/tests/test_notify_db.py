@@ -1,4 +1,4 @@
-"""Tests de integración del outbox/poller con SQLite en memoria."""
+﻿"""Tests de integraciÃ³n del outbox/poller con SQLite en memoria."""
 
 from __future__ import annotations
 
@@ -6,12 +6,10 @@ from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
 import pytest
+from conftest import make_session_factory
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
 
 from app import models  # noqa: F401 - registra todas las tablas
-from app.db import Base
 from app.models.adult import DailySummaryConfig
 from app.models.notify import NotificationOutbox, PushSubscription
 from app.models.school import CheckinConfig
@@ -19,7 +17,7 @@ from app.models.task import Task
 from app.models.user import User
 from app.services import notify as N
 
-NOW = datetime(2026, 9, 20, 9, 0)  # domingo 09:00 UTC → Madrid 11:00
+NOW = datetime(2026, 9, 20, 9, 0)  # domingo 09:00 UTC â†’ Madrid 11:00
 
 
 class _Resp:
@@ -34,14 +32,7 @@ class _WebPushExc(Exception):
 
 
 async def _session(monkeypatch=None, send_raises=None):
-    engine = create_async_engine(
-        "sqlite+aiosqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    maker = async_sessionmaker(engine, expire_on_commit=False)
+    maker = await make_session_factory()
     if monkeypatch is not None:
         async def _fake_send(sub, payload, _raises=send_raises):
             if _raises is not None:
@@ -99,7 +90,7 @@ async def test_fill_outbox_crea_y_deduplica():
         kinds = {r.kind: r for r in rows}
         assert set(kinds) == {"reminder", "checkin", "summary"}
         assert kinds["reminder"].due_at == datetime(2026, 9, 20, 10, 0)  # 12:00 Madrid
-        # domingo 8:00 ya pasó (Madrid 11:00) → próximo domingo 27
+        # domingo 8:00 ya pasÃ³ (Madrid 11:00) â†’ prÃ³ximo domingo 27
         assert kinds["summary"].due_at.date().isoformat().endswith("-27")
         # lunes 21 20:00 Madrid = 18:00 UTC
         assert kinds["checkin"].due_at == datetime(2026, 9, 21, 18, 0)
@@ -151,7 +142,7 @@ async def test_poller_envia_y_marca_sent(monkeypatch):
         row = (await db.execute(select(NotificationOutbox))).scalars().one()
         assert row.status == "sent"
         assert row.sent_at == NOW
-        # la suscripción sigue viva
+        # la suscripciÃ³n sigue viva
         assert len((await db.execute(select(PushSubscription))).scalars().all()) == 1
 
 

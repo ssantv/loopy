@@ -281,13 +281,16 @@ Pestaña global con todas las tareas con ocurrencia pendiente (hoy + atrasadas),
 ## 9. Seguridad
 
 - argon2id, sesiones opacas con hash en BD (refresh/revocación), rate limiting (login/reset), validación Pydantic, todo filtrado por `user_id`, HTTPS (Caddy + Let's Encrypt). Email solo para reset verificado.
+- **Hecho**: rate limit del login en `app/services/ratelimit.py` (ventana deslizante en memoria; 5 fallos por `(email, IP)` en 5 min → `429` + `Retry-After`; un login correcto limpia el contador). Clave por `(email, IP)` leyendo `X-Forwarded-For` porque detrás de Caddy `request.client.host` es el proxy.
+  - Es en memoria a propósito (la API corre con un solo worker de uvicorn). Con varios workers o réplicas habría que moverlo a Postgres/Redis.
+  - **Pendiente**: el mismo limitador debe cubrir `reset` de contraseña cuando se implemente.
 
 ---
 
 ## 10. Roadmap
 
 1. **Scaffolding**: estructura de repo, Docker Compose, PWA (Vite) + FastAPI `/health`.
-2. **Auth**: usuarios (con `birth_date` en niño), sesiones, rate limit, reset.
+2. **Auth**: usuarios (con `birth_date` en niño), sesiones, rate limit, reset. *(rate limit ✅ · reset de contraseña pendiente)*
 3. **Motor de tareas**: `tasks`, recurrencias (daily/weekly/month_day/interval/rotación), "¿qué toca hoy?", completar → recalcular, hora opcional + `notify`.
 4. **Niño — colegio**: asignaturas, deberes, trabajos + sugerencias, exámenes + plan hacia atrás, extraescolares, `work_sessions` (temporizador + pomodoro).
 5. **Niño — check-in + tono**: alta rápida 3 tipos, plantillas por edad, `tone_source`.

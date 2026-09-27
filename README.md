@@ -46,3 +46,10 @@ npm run dev
 ```
 
 Ver la planificación funcional completa en [`Planteamiento.md`](Planteamiento.md).
+
+## Seguridad
+
+- Sesiones con token opaco hasheado en BD (`sha256`), sin JWT. TTL 30 días.
+- **Rate limit del login**: 5 intentos fallidos por `(email, IP)` en una ventana de 5 min → `429` con cabecera `Retry-After`. Sólo cuenta los fallos, y un login correcto limpia el contador. Ajustable con `LOGIN_MAX_ATTEMPTS` y `LOGIN_WINDOW_SECONDS` en `.env`.
+- Aislamiento por capa de servicio: todas las consultas se filtran por `user_id`.
+- HTTPS con Caddy + Let's Encrypt en el despliegue.

@@ -7,15 +7,32 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db import get_db
 from app.models import Session, User
 from app.schemas.auth import AuthResponse, LoginRequest, RegisterRequest, UserOut
 from app.security import hash_password, verify_password
+from app.services.ratelimit import SlidingWindowLimiter
 from app.services.tones import tone_for_age
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 bearer = HTTPBearer(auto_error=False)
+
+# Fuerza bruta: 5 intentos fallidos por (email, IP) en una ventana de 5 min.
+_login_limiter = SlidingWindowLimiter(settings.login_max_attempts, settings.login_window_seconds)
+
+
+def _login_key(request: Request, email: str) -> str:
+    """Clave del limitador. Usa el email normalizado y la IP del cliente.
+
+    Detrás de un proxy (Caddy/nginx) `request.client.host` es la IP del proxy;
+    por eso se prioriza X-Forwarded-For cuando viene, que es lo que inyecta
+    Caddy en el despliegue real.
+    """
+    forwarded = request.headers.get("x-forwarded-for")
+    ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown")
+    return f"{email.lower()}|{ip}"
 
 
 async def get_current_user(
@@ -66,10 +83,24 @@ async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db))
 
 
 @router.post("/login", response_model=AuthResponse)
-async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)) -> AuthResponse:
+async def login(
+    payload: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)
+) -> AuthResponse:
+    key = _login_key(request, payload.email)
+    retry_after = _login_limiter.retry_after(key)
+    if retry_after:
+        # 429 Too Many Requests + Retry-After: el cliente sabe cuándo reintentar.
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Demasiados intentos fallidos. Inténtalo de nuevo en {retry_after} s.",
+            headers={"Retry-After": str(retry_after)},
+        )
     user = (await db.execute(select(User).where(User.email == payload.email))).scalar_one_or_none()
     if user is None or not verify_password(payload.password, user.password_hash):
+        _login_limiter.record_failure(key)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Email o contraseña incorrectos")
+    # Login correcto: el contador de esa clave se olvida.
+    _login_limiter.reset(key)
     token, session = await _create_session(db, user)
     return AuthResponse(token=token, user=UserOut(**user_out_dict(user)))
 

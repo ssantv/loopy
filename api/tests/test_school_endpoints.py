@@ -43,6 +43,9 @@ async def env():
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield SimpleNamespace(client=c, maker=maker)
     app.dependency_overrides.clear()
+    # Cierra las conexiones del pool antes de que muera el event loop: si no, los
+    # hilos de aiosqlite sobreviven y pytest avisa de "Event loop is closed".
+    await engine.dispose()
 
 
 async def _register_and_login(env, email="kal@test.com") -> str:

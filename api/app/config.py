@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     session_token_bytes: int = 32
     session_ttl_days: int = 30
 
+    # Rate limit del login (intentos fallidos por email+IP dentro de la ventana)
+    login_max_attempts: int = 5
+    login_window_seconds: int = 300
+
     cors_origins: list[str] = ["http://localhost:5173"]
 
     # Web Push (VAPID)

@@ -4,12 +4,10 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+from conftest import make_session_factory
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
 
 from app import models  # noqa: F401 - registra todas las tablas
-from app.db import Base
 from app.models.adult import ShoppingItem
 from app.models.menu import (
     CategoryGoal,
@@ -47,14 +45,8 @@ MONDAY = date(2026, 9, 21)  # lunes
 
 
 async def _session():
-    engine = create_async_engine(
-        "sqlite+aiosqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    return async_sessionmaker(engine, expire_on_commit=False)
+    maker = await make_session_factory()
+    return maker
 
 
 async def _user(db) -> int:
