@@ -530,36 +530,35 @@ function MonthGrid({
   for (let i = 1; i <= daysInMonth; i++) {
     cells.push(toISO(new Date(first.getFullYear(), first.getMonth(), i)));
   }
+  // Rejilla de 7 columnas iguales en vez de filas con flex: los huecos de la
+  // primera y de la ultima semana siguen ocupando su columna, asi que el dia
+  // 28/29/30 sigue cayendo en lunes/martes/miercoles y no se ensancha.
+  const columnas = { display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 1 } as const;
   return (
     <Stack spacing={0.5}>
-      <Stack direction="row" spacing={0.5}>
+      <Box sx={columnas}>
         {WEEKDAY_LABEL.map((w) => (
-          <Box key={w} sx={{ flex: 1, textAlign: "center", minWidth: 0 }}>
-            <Typography variant="caption" color="text.secondary">
-              {w}
-            </Typography>
-          </Box>
+          <Typography key={w} variant="caption" color="text.secondary" sx={{ textAlign: "center" }}>
+            {w}
+          </Typography>
         ))}
-      </Stack>
-      {Array.from({ length: Math.ceil(cells.length / 7) }, (_, row) => (
-        <Stack key={row} direction="row" spacing={0.5}>
-          {cells.slice(row * 7, row * 7 + 7).map((iso, i) =>
-            iso ? (
-              <Box key={iso} sx={{ flex: 1, minWidth: 0 }}>
-                <MonthCell
-                  dayISO={iso}
-                  day={days[iso] ?? { tasks: [], plan: [] }}
-                  today={today}
-                  onOpenDay={onOpenDay}
-                  onAddSession={onAddSession}
-                />
-              </Box>
-            ) : (
-              <Box key={`empty-${row}-${i}`} sx={{ flex: 1, minWidth: 0, height: 62 }} />
-            ),
-          )}
-        </Stack>
-      ))}
+      </Box>
+      <Box sx={columnas}>
+        {cells.map((iso, i) =>
+          iso ? (
+            <MonthCell
+              key={iso}
+              dayISO={iso}
+              day={days[iso] ?? { tasks: [], plan: [] }}
+              today={today}
+              onOpenDay={onOpenDay}
+              onAddSession={onAddSession}
+            />
+          ) : (
+            <Box key={`vacio-${i}`} sx={{ height: 62 }} />
+          ),
+        )}
+      </Box>
     </Stack>
   );
 }
