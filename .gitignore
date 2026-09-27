@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+!*.env.example
+deploy/caddy_data/
+deploy/caddy_config/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Bases de datos locales
+*.db
+*.sqlite3
+
+# Artefactos de análisis / QA
+test-results/
+*.patch
