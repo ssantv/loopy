@@ -35,6 +35,9 @@ export default defineConfig({
   ],
   server: {
     port: 5173,
+    // Escuchar en la red local para poder abrir la app desde el movil
+    // (http://<ip-del-pc>:5173) y probar el diseno responsive de verdad.
+    host: true,
     proxy: {
       "/api": {
         target: "http://127.0.0.1:8000",

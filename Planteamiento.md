@@ -249,9 +249,13 @@ Una tarea aparece en el día D si `rec_next_due <= D` y no está completada. Mie
 
 ---
 
-## 6. Listado "Pendientes" (ambos perfiles)
+## 6. Marcado masivo en la página principal (ambos perfiles)
 
-Pestaña global con todas las tareas con ocurrencia pendiente (hoy + atrasadas), checkboxes para **marcado masivo**. En reglas de calendario la marca previa **no consume** futuras; en intervalo **se recalcula desde hoy**. Pensado también para el niño: puede no usar temporizadores, usar la app solo como recordatorio y tachar varias de golpe ("ya acabé todo").
+La principal ya es la lista del día (qué toca hoy, atrasadas, adelantadas, hecho) y el niño tiene además **deberes y trabajos** y **próximos exámenes**, con cuenta atrás. Se añadió el botón **"Marcar todo lo de hoy como hecho"**, que llama a `POST /api/pending/complete` con los ids de hoy.
+
+Antes esto era una pestaña aparte ("Pendientes") con multi-select. Se fusionó en la principal: para quien tiene dificultades de organización, tener los datos de "lo que tengo que hacer" repartidos entre dos pantallas obliga a decidir dónde mirar y genera desconfianza. Para limpiar la lista del día basta un botón; lo atrasado sigue visible y marcable fila a fila. `/pendientes` queda como redirección a `/`.
+
+En reglas de calendario la marca previa **no consume** futuras; en intervalo **se recalcula desde hoy**.
 
 ---
 
@@ -295,7 +299,7 @@ Pestaña global con todas las tareas con ocurrencia pendiente (hoy + atrasadas),
 4. **Niño — colegio**: asignaturas, deberes, trabajos + sugerencias, exámenes + plan hacia atrás, extraescolares, `work_sessions` (temporizador + pomodoro).
 5. **Niño — check-in + tono**: alta rápida 3 tipos, plantillas por edad, `tone_source`.
 6. **Adulto**: puntuales (cosas de hoy), hogar por habitaciones (adelantadas), compra + Recomendar, resumen diario + excepciones.
-7. **Listado "Pendientes"** masivo (ambos perfiles).
+7. **Marcado masivo** en la principal (ambos perfiles) — antes era la pestaña "Pendientes", ahora fusionada.
 8. **Menú**: franjas, categorías + objetivos, recetas + ingredientes, planificador (copiar semana), añadir a compra, recomendar huecos.
 9. **Scheduler + push**: outbox, poller, pywebpush, suscripciones, retries.
 10. **Deploy VPS + pruebas reales**: Android Chrome, iOS Safari (pantalla de inicio), offline.

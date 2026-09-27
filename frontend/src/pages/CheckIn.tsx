@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
+import { BOTTOM_BAR_PADDING, PageNav, SubNav } from "../components/Nav";
 import { checkinApi, subjectApi, type QuickItem, type QuickItemType, type Subject } from "../api/client";
-import { useAuth } from "../auth/AuthContext";
-import AppBar from "@mui/material/AppBar";
-import Toolbar from "@mui/material/Toolbar";
 import Typography from "@mui/material/Typography";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -53,7 +51,6 @@ interface Draft {
 }
 
 export default function CheckIn() {
-  const { logout } = useAuth();
   const navigate = useNavigate();
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [toneTemplate, setToneTemplate] = useState<string | null>(null);
@@ -156,24 +153,10 @@ export default function CheckIn() {
 
   return (
     <Box>
-      <AppBar position="static">
-        <Toolbar sx={{ gap: 1 }}>
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            Loopy · Check-in
-          </Typography>
-          <Button color="inherit" size="small" component={Link} to="/">
-            Mi día
-          </Button>
-          <Button color="inherit" size="small" component={Link} to="/colegio">
-            Colegio
-          </Button>
-          <Button color="inherit" size="small" onClick={() => void logout()}>
-            Salir
-          </Button>
-        </Toolbar>
-      </AppBar>
+      <PageNav title="Check-in" />
 
-      <Box sx={{ maxWidth: 640, margin: "0 auto", padding: "1.5rem 1rem" }}>
+      <Box sx={{ maxWidth: 640, margin: "0 auto", padding: "1.5rem 1rem", pb: BOTTOM_BAR_PADDING }}>
+        <SubNav area="colegio" />
         <Typography variant="h4" sx={{ mb: 0.5 }}>
           ¿Qué te ponen hoy?
         </Typography>

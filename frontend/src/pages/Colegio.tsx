@@ -1,9 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { BOTTOM_BAR_PADDING, PageNav, SubNav } from "../components/Nav";
 import { examApi, subjectApi, type Exam, type ExamPlan, type PlanItem, type Subject } from "../api/client";
-import { useAuth } from "../auth/AuthContext";
-import AppBar from "@mui/material/AppBar";
-import Toolbar from "@mui/material/Toolbar";
 import Typography from "@mui/material/Typography";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -151,7 +148,6 @@ function PhaseFields({
 }
 
 export default function Colegio() {
-  const { logout } = useAuth();
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [exams, setExams] = useState<Exam[]>([]);
   const [plans, setPlans] = useState<Record<number, ExamPlan>>({});
@@ -267,24 +263,10 @@ export default function Colegio() {
 
   return (
     <Box>
-      <AppBar position="static">
-        <Toolbar sx={{ gap: 1 }}>
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            Loopy · Colegio
-          </Typography>
-          <Button color="inherit" size="small" component={Link} to="/">
-            Mi día
-          </Button>
-          <Button color="inherit" size="small" component={Link} to="/checkin">
-            + Check-in
-          </Button>
-          <Button color="inherit" size="small" onClick={() => void logout()}>
-            Salir
-          </Button>
-        </Toolbar>
-      </AppBar>
+      <PageNav title="Colegio" />
 
-      <Box sx={{ maxWidth: 640, margin: "0 auto", padding: "1.5rem 1rem" }}>
+      <Box sx={{ maxWidth: 640, margin: "0 auto", padding: "1.5rem 1rem", pb: BOTTOM_BAR_PADDING }}>
+        <SubNav area="colegio" />
         <Typography variant="h4" sx={{ mb: 0.5 }}>
           Colegio
         </Typography>

@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { useAuth } from "../auth/AuthContext";
+import { BOTTOM_BAR_PADDING, PageNav, SubNav } from "../components/Nav";
 import { summaryApi, type SummaryConfig, type SummaryException } from "../api/client";
 import { monthISO, todayISO } from "./today";
-import AppBar from "@mui/material/AppBar";
-import Toolbar from "@mui/material/Toolbar";
 import Typography from "@mui/material/Typography";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -30,7 +27,6 @@ interface DayCell {
 }
 
 export default function Resumen() {
-  const { logout } = useAuth();
   const [config, setConfig] = useState<SummaryConfig | null>(null);
   const [month, setMonth] = useState<string>(monthISO());
   const [days, setDays] = useState<SummaryException[]>([]);
@@ -126,27 +122,10 @@ export default function Resumen() {
 
   return (
     <Box>
-      <AppBar position="static">
-        <Toolbar sx={{ gap: 1 }}>
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            Resumen diario
-          </Typography>
-          <Button color="inherit" size="small" component={Link} to="/">
-            Inicio
-          </Button>
-          <Button color="inherit" size="small" component={Link} to="/casa">
-            Hogar
-          </Button>
-          <Button color="inherit" size="small" component={Link} to="/compra">
-            Compra
-          </Button>
-          <Button color="inherit" size="small" onClick={() => void logout()}>
-            Salir
-          </Button>
-        </Toolbar>
-      </AppBar>
+      <PageNav title="Resumen" />
 
-      <Box sx={{ maxWidth: 640, margin: "0 auto", padding: "1.5rem 1rem" }}>
+      <Box sx={{ maxWidth: 640, margin: "0 auto", padding: "1.5rem 1rem", pb: BOTTOM_BAR_PADDING }}>
+        <SubNav area="casa" />
         <Stack spacing={3}>
           <Typography variant="h4">Resumen diario</Typography>
 

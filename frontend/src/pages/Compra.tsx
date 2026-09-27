@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { useAuth } from "../auth/AuthContext";
+import { BOTTOM_BAR_PADDING, PageNav, SubNav } from "../components/Nav";
 import { shoppingApi, type ShoppingItem, type ShoppingRecommend } from "../api/client";
-import AppBar from "@mui/material/AppBar";
-import Toolbar from "@mui/material/Toolbar";
 import Typography from "@mui/material/Typography";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -23,7 +20,6 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import HistoryIcon from "@mui/icons-material/History";
 
 export default function Compra() {
-  const { logout } = useAuth();
   const [items, setItems] = useState<ShoppingItem[]>([]);
   const [recs, setRecs] = useState<ShoppingRecommend[]>([]);
   const [loading, setLoading] = useState(true);
@@ -107,27 +103,10 @@ export default function Compra() {
 
   return (
     <Box>
-      <AppBar position="static">
-        <Toolbar sx={{ gap: 1 }}>
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            Lista de la compra
-          </Typography>
-          <Button color="inherit" size="small" component={Link} to="/">
-            Inicio
-          </Button>
-          <Button color="inherit" size="small" component={Link} to="/casa">
-            Hogar
-          </Button>
-          <Button color="inherit" size="small" component={Link} to="/resumen">
-            Resumen
-          </Button>
-          <Button color="inherit" size="small" onClick={() => void logout()}>
-            Salir
-          </Button>
-        </Toolbar>
-      </AppBar>
+      <PageNav title="Compra" />
 
-      <Box sx={{ maxWidth: 640, margin: "0 auto", padding: "1.5rem 1rem" }}>
+      <Box sx={{ maxWidth: 640, margin: "0 auto", padding: "1.5rem 1rem", pb: BOTTOM_BAR_PADDING }}>
+        <SubNav area="casa" />
         <Typography variant="h4" sx={{ mb: 2 }}>
           Compra
         </Typography>

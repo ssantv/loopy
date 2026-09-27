@@ -1,8 +1,8 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { useAuth } from "../auth/AuthContext";
+import { BOTTOM_BAR_PADDING, PageNav, useIsChild } from "../components/Nav";
 import {
   taskApi,
+  pendingApi,
   pushApi,
   urlBase64ToUint8Array,
   subjectApi,
@@ -13,8 +13,6 @@ import {
   type PlanPhase,
   type Subject,
 } from "../api/client";
-import AppBar from "@mui/material/AppBar";
-import Toolbar from "@mui/material/Toolbar";
 import Typography from "@mui/material/Typography";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -119,7 +117,7 @@ function toTaskState(task: Task, today: string): "hoy" | "hecho" | "atrasada" | 
 }
 
 export default function Home() {
-  const { user, logout } = useAuth();
+  const isChild = useIsChild();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [examPlanItems, setExamPlanItems] = useState<{ item: PlanItem; subject: string; examId: number }[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -130,6 +128,8 @@ export default function Home() {
   const [adelantadasOpen, setAdelantadasOpen] = useState(false);
   const [hechoOpen, setHechoOpen] = useState(false);
   const [sessionOpen, setSessionOpen] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMsg, setBulkMsg] = useState<string | null>(null);
 
   const today = useMemo(todayISO, []);
 
@@ -140,7 +140,7 @@ export default function Home() {
     let examItems: { item: PlanItem; subject: string; examId: number }[] = [];
     let subjectRows: Subject[] = [];
     let examRows: Exam[] = [];
-    if (user?.profile_type === "child") {
+      if (isChild) {
       subjectRows = await subjectApi.list();
       examRows = await examApi.list();
       for (const ex of examRows) {
@@ -160,7 +160,7 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }, [today, user?.profile_type]);
+  }, [today, isChild]);
 
   useEffect(() => {
     void load();
@@ -247,54 +247,35 @@ export default function Home() {
     [today, load],
   );
 
+  const completeAllToday = useCallback(async () => {
+    const ids = groups.hoy.map((t) => t.id);
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    setBulkMsg(null);
+    try {
+      const res = await pendingApi.complete(ids);
+      setBulkMsg(
+        res.errors.length > 0
+          ? `Completadas: ${res.completed.length}, con errores: ${res.errors.length}`
+          : `¡Bien! ${res.completed.length} tarea${res.completed.length === 1 ? "" : "s"} al día.`,
+      );
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error al completar");
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [groups.hoy, load]);
+
   const listItemSx: SxProps = { borderRadius: 2 };
 
   return (
     <Box>
-      <AppBar position="static">
-        <Toolbar sx={{ gap: 1 }}>
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            Loopy
-          </Typography>
-          <Typography variant="body2" sx={{ opacity: 0.9 }}>
-            {user?.display_name ?? user?.email}
-          </Typography>
-          {user?.profile_type === "adult" && (
-            <>
-              <Button color="inherit" size="small" component={Link} to="/casa">
-                Hogar
-              </Button>
-              <Button color="inherit" size="small" component={Link} to="/menu">
-                Menú
-              </Button>
-              <Button color="inherit" size="small" component={Link} to="/compra">
-                Compra
-              </Button>
-              <Button color="inherit" size="small" component={Link} to="/resumen">
-                Resumen
-              </Button>
-            </>
-          )}
-          {user?.profile_type === "child" && (
-            <Button color="inherit" size="small" component={Link} to="/checkin">
-              + Check-in
-            </Button>
-          )}
-          <Button color="inherit" size="small" component={Link} to="/pendientes">
-            Pendientes
-          </Button>
-          <Button color="inherit" size="small" component={Link} to="/calendario">
-            Calendario
-          </Button>
-          <Button color="inherit" size="small" onClick={() => void logout()}>
-            Salir
-          </Button>
-        </Toolbar>
-      </AppBar>
+      <PageNav title="Mi día" />
 
-      <Box sx={{ maxWidth: 640, margin: "0 auto", padding: "1.5rem 1rem" }}>
+      <Box sx={{ maxWidth: 640, margin: "0 auto", padding: "1.5rem 1rem", pb: BOTTOM_BAR_PADDING }}>
         <Typography variant="h4" sx={{ mb: 0.5 }}>
-          Hola{user?.profile_type === "child" ? " pequeño" : ""}
+          Hola{isChild ? " pequeño" : ""}
         </Typography>
         <Typography color="text.secondary" sx={{ textTransform: "capitalize", mb: 2 }}>
           {fmtDate(today)}
@@ -321,7 +302,8 @@ export default function Home() {
                   No tienes nada pendiente para hoy.
                 </Alert>
               ) : (
-                <List sx={{ p: 0 }}>
+                <>
+                  <List sx={{ p: 0 }}>
                   {groups.hoy.map((t) => (
                     <TaskRow key={t.id} task={t} today={today} onToggle={toggle} sx={listItemSx} />
                   ))}
@@ -333,14 +315,33 @@ export default function Home() {
                       onToggle={() => void togglePlan(examId, item)}
                     />
                   ))}
-                  {user?.profile_type === "child" && subjects.length > 0 && (
+                  {isChild && subjects.length > 0 && (
                     <Box sx={{ mt: 1 }}>
                       <Button variant="outlined" size="small" onClick={() => setSessionOpen(true)} fullWidth>
                         + Hoy he hecho sesión por mi cuenta
                       </Button>
                     </Box>
                   )}
-                </List>
+                  </List>
+                  {groups.hoy.length > 0 && (
+                    <Box sx={{ mt: 1 }}>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        onClick={() => void completeAllToday()}
+                        disabled={bulkBusy}
+                        fullWidth
+                      >
+                        Marcar todo lo de hoy como hecho
+                      </Button>
+                      {bulkMsg ? (
+                        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
+                          {bulkMsg}
+                        </Typography>
+                      ) : null}
+                    </Box>
+                  )}
+                </>
               )}
             </section>
 
@@ -407,7 +408,7 @@ export default function Home() {
               </section>
             )}
 
-            {user?.profile_type === "child" && (
+            {isChild && (
               <>
                 <section>
                   <Divider sx={{ mb: 1 }} />
@@ -457,11 +458,6 @@ export default function Home() {
                       })}
                     </List>
                   )}
-                  <Box sx={{ mt: 1 }}>
-                    <Button size="small" component={Link} to="/colegio">
-                      Gestionar colegio
-                    </Button>
-                  </Box>
                 </section>
 
                 {colegio.length > 0 && (

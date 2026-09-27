@@ -1,12 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { useAuth } from "../auth/AuthContext";
+import { BOTTOM_BAR_PADDING, PageNav, SubNav } from "../components/Nav";
 import { homeApi, roomApi, taskApi, type HomeItem, type HomeOut, type Room } from "../api/client";
 import { todayISO } from "./today";
 import Tabs from "@mui/material/Tabs";
 import Tab from "@mui/material/Tab";
-import AppBar from "@mui/material/AppBar";
-import Toolbar from "@mui/material/Toolbar";
 import Typography from "@mui/material/Typography";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -39,7 +36,6 @@ function fmtDay(d: string | null): string {
 }
 
 export default function Casa() {
-  const { logout } = useAuth();
   const today = todayISO();
   const [home, setHome] = useState<HomeOut | null>(null);
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -197,27 +193,10 @@ export default function Casa() {
 
   return (
     <Box>
-      <AppBar position="static">
-        <Toolbar sx={{ gap: 1 }}>
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            Hogar
-          </Typography>
-          <Button color="inherit" size="small" component={Link} to="/">
-            Inicio
-          </Button>
-          <Button color="inherit" size="small" component={Link} to="/compra">
-            Compra
-          </Button>
-          <Button color="inherit" size="small" component={Link} to="/resumen">
-            Resumen
-          </Button>
-          <Button color="inherit" size="small" onClick={() => void logout()}>
-            Salir
-          </Button>
-        </Toolbar>
-      </AppBar>
+      <PageNav title="Casa" />
 
-      <Box sx={{ maxWidth: 640, margin: "0 auto", padding: "1.5rem 1rem" }}>
+      <Box sx={{ maxWidth: 640, margin: "0 auto", padding: "1.5rem 1rem", pb: BOTTOM_BAR_PADDING }}>
+        <SubNav area="casa" />
         <Typography variant="h4">Casa</Typography>
         <Typography color="text.secondary" sx={{ textTransform: "capitalize", mb: 2 }}>
           {dayLabel}

@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { BOTTOM_BAR_PADDING, PageNav } from "../components/Nav";
 import { calendarApi, examApi, subjectApi, taskApi, type Calendar, type CalendarDay, type CalendarTask, type PlanPhase } from "../api/client";
-import AppBar from "@mui/material/AppBar";
-import Toolbar from "@mui/material/Toolbar";
 import Typography from "@mui/material/Typography";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -203,18 +201,9 @@ export default function Calendario() {
 
   return (
     <Box>
-      <AppBar position="static">
-        <Toolbar sx={{ gap: 1, flexWrap: "wrap" }}>
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            Calendario
-          </Typography>
-          <Button color="inherit" size="small" component={Link} to="/">
-            Mi día
-          </Button>
-        </Toolbar>
-      </AppBar>
+      <PageNav title="Calendario" />
 
-      <Box sx={{ maxWidth: 860, margin: "0 auto", padding: "1.5rem 1rem" }}>
+      <Box sx={{ maxWidth: 860, margin: "0 auto", padding: "1.5rem 1rem", pb: BOTTOM_BAR_PADDING }}>
         <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1.5 }} flexWrap="wrap">
           <Button variant="outlined" size="small" onClick={() => nav(-1)}>
             ◀

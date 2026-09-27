@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import CircleProgress from "@mui/material/CircularProgress";
 import Box from "@mui/material/Box";
 import { useAuth } from "./auth/AuthContext";
+import { isChildProfile } from "./components/Nav";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import OlvidePassword from "./pages/OlvidePassword";
@@ -12,7 +13,6 @@ import CheckIn from "./pages/CheckIn";
 import Casa from "./pages/Casa";
 import Compra from "./pages/Compra";
 import Resumen from "./pages/Resumen";
-import Pendientes from "./pages/Pendientes";
 import Menu from "./pages/Menu";
 import Calendario from "./pages/Calendario";
 
@@ -36,7 +36,7 @@ function ChildOnly({ children }: { children: React.ReactNode }) {
         <CircleProgress />
       </Box>
     );
-  if (!user || user.profile_type !== "child") return <Navigate to="/" replace />;
+  if (!user || !isChildProfile(user.profile_type)) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
 
@@ -48,7 +48,7 @@ function AdultOnly({ children }: { children: React.ReactNode }) {
         <CircleProgress />
       </Box>
     );
-  if (!user || user.profile_type !== "adult") return <Navigate to="/" replace />;
+  if (!user || isChildProfile(user.profile_type)) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
 
@@ -66,7 +66,7 @@ export default function App() {
       <Route path="/compra" element={<AdultOnly>{<Compra />}</AdultOnly>} />
       <Route path="/resumen" element={<AdultOnly>{<Resumen />}</AdultOnly>} />
       <Route path="/menu" element={<AdultOnly>{<Menu />}</AdultOnly>} />
-      <Route path="/pendientes" element={<Protected>{<Pendientes />}</Protected>} />
+      <Route path="/pendientes" element={<Navigate to="/" replace />} />
       <Route path="/calendario" element={<Protected>{<Calendario />}</Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

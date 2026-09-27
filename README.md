@@ -2,7 +2,18 @@
 
 App de organización personal multiusuario con **dos perfiles independientes por cuenta**: **Adulto** (recordatorios, hogar, compra, menú, resumen diario) y **Niño** (deberes, trabajos, exámenes con plan de estudio automático, check-in diario).
 
-> Fase actual: **pasos 7, 8 y 9** — listado global de **Pendientes** por ambos perfiles con marcado masivo; **Menú de comidas** adulto (franjas, categorías+objetivos, recetas+ingredientes, plan semanal con copiar/recomendar/añadir a compra); y **scheduler + push** (outbox, poller VAPID con reintentos, suscripción Web Push desde la PWA); sobre el módulo adulto (hogar, compra, resumen diario, menú) y el módulo niño (colegio + plan de estudio + check-in).
+> Fase actual: **pasos 7, 8 y 9** — marcado masivo de lo pendiente desde la propia principal; **Menú de comidas** adulto (franjas, categorías+objetivos, recetas+ingredientes, plan semanal con copiar/recomendar/añadir a compra); y **scheduler + push** (outbox, poller VAPID con reintentos, suscripción Web Push desde la PWA); sobre el módulo adulto (hogar, compra, resumen diario, menú) y el módulo niño (colegio + plan de estudio + check-in).
+
+## Navegación
+
+Pensada para pantallas pequeñas y para quien tiene dificultades de organización, así que hay **una sola puerta de entrada y muy pocas decisiones**:
+
+- **Siempre 3 destinos de primer nivel**, en el mismo orden: **Mi día** · **Colegio** (niño) o **Casa** (adulto) · **Calendario**.
+- En **móvil** van en una **barra fija abajo** (al alcance del pulgar); en escritorio, en la cabecera.
+- "Mi día" está siempre visible y marcado, así que nunca se pierde el camino de vuelta.
+- Las páginas de un área (**Menú/Compra/Resumen**, **Check-in**) van en una subnavegación dentro del área, no en la barra.
+- **"Salir"** está en el menú de usuario de la cabecera, para no competir con la navegación.
+- Todo lo accionable está en la principal: qué toca hoy, atrasadas, adelantadas, deberes con cuenta atrás, próximos exámenes y el calendario.
 
 ## Stack
 
@@ -44,6 +55,14 @@ cd frontend
 npm install
 npm run dev
 ```
+
+Vite escucha también en la red local (`host: true`), así que para revisar el diseño en el móvil de verdad, con el móvil en el mismo WiFi:
+
+```bash
+ipconfig   # busca tu IPv4, p. ej. 192.168.1.43
+```
+
+y abre `http://<tu-ip>:5173` en el navegador del móvil. Ojo: eso deja la app accesible para cualquiera de tu red local, solo para desarrollo.
 
 Ver la planificación funcional completa en [`Planteamiento.md`](Planteamiento.md).
 
