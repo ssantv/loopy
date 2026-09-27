@@ -1,0 +1,4 @@
+# Sustituir el dominio real. Caddy generará los certificados HTTPS automáticamente.
+{$APP_DOMAIN:loopy.midominio.com} {
+    reverse_proxy frontend:80
+}
