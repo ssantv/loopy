@@ -68,3 +68,43 @@ class Session(Base):
     @classmethod
     def lifetime(cls) -> timedelta:
         return timedelta(days=settings.session_ttl_days)
+
+
+class PasswordResetToken(Base):
+    """Token de un solo uso para restablecer la contraseña vía email.
+
+    Nunca se guarda el token en claro: solo su sha256, como las sesiones. Un
+    token queda invalidado cuando se usa (`used_at`) o cuando caduca
+    (`expires_at`). Al confirmar un reset se revocan todas las sesiones del
+    usuario, por si el robo de la contraseña venía con una sesión viva.
+    """
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    @classmethod
+    def new_token(cls) -> str:
+        return secrets.token_urlsafe(32)
+
+    @classmethod
+    def hash_token(cls, token: str) -> str:
+        return hashlib.sha256(token.encode()).hexdigest()
+
+    @classmethod
+    def lifetime(cls) -> timedelta:
+        return timedelta(minutes=settings.password_reset_ttl_minutes)
+
+    def is_usable(self, now: datetime | None = None) -> bool:
+        """True si el token aún se puede canjear (no usado y sin caducar)."""
+        now = now or datetime.now(UTC)
+        expires = self.expires_at
+        # SQLite devuelve las fechas sin tzinfo; se asumen UTC para comparar.
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=UTC)
+        return self.used_at is None and expires > now

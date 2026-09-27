@@ -23,6 +23,20 @@ class Settings(BaseSettings):
     login_max_attempts: int = 5
     login_window_seconds: int = 300
 
+    # Restablecimiento de contraseña por email
+    password_reset_ttl_minutes: int = 30
+    password_reset_max_requests: int = 3
+    # SMTP. Si host está vacío no se envían correos: el token se registra en el
+    # log (solo en desarrollo) para poder completar el flujo a mano.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_use_tls: bool = True
+    smtp_from: str = "no-reply@loopy.local"
+    # URL pública del frontend, para el enlace del correo.
+    public_app_url: str = "http://localhost:5173"
+
     cors_origins: list[str] = ["http://localhost:5173"]
 
     # Web Push (VAPID)

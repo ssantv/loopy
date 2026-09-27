@@ -34,3 +34,12 @@ class UserOut(BaseModel):
 class AuthResponse(BaseModel):
     token: str
     user: UserOut
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str = Field(min_length=10, max_length=256)
+    new_password: str = Field(min_length=8, max_length=128)

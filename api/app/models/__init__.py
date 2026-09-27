@@ -12,11 +12,12 @@ from app.models.menu import (
 from app.models.notify import NotificationOutbox, PushSubscription
 from app.models.school import CheckinConfig, Exam, Extracurricular, StudyCompletion, WorkSession
 from app.models.task import Room, RotationGroup, Subject, Task, TaskCompletion
-from app.models.user import Session, User
+from app.models.user import PasswordResetToken, Session, User
 
 __all__ = [
     "User",
     "Session",
+    "PasswordResetToken",
     "Room",
     "Subject",
     "Task",

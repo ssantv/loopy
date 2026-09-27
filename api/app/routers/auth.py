@@ -9,9 +9,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_db
-from app.models import Session, User
-from app.schemas.auth import AuthResponse, LoginRequest, RegisterRequest, UserOut
+from app.models import PasswordResetToken, Session, User
+from app.schemas.auth import (
+    AuthResponse,
+    LoginRequest,
+    PasswordResetConfirm,
+    PasswordResetRequest,
+    RegisterRequest,
+    UserOut,
+)
 from app.security import hash_password, verify_password
+from app.services.mailer import password_reset_body, send_email
 from app.services.ratelimit import SlidingWindowLimiter
 from app.services.tones import tone_for_age
 
@@ -21,6 +29,9 @@ bearer = HTTPBearer(auto_error=False)
 
 # Fuerza bruta: 5 intentos fallidos por (email, IP) en una ventana de 5 min.
 _login_limiter = SlidingWindowLimiter(settings.login_max_attempts, settings.login_window_seconds)
+# Peticiones de reset: 3 por (email, IP) en la misma ventana, para no spamear
+# correos a un tercero que sepa el email de alguien.
+_reset_limiter = SlidingWindowLimiter(settings.password_reset_max_requests, settings.login_window_seconds)
 
 
 def _login_key(request: Request, email: str) -> str:
@@ -120,6 +131,77 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
             if tone != user.notification_tone:
                 user.notification_tone = tone
     return UserOut(**user_out_dict(user))
+
+
+@router.post("/password-reset/request", status_code=status.HTTP_202_ACCEPTED)
+async def request_password_reset(
+    payload: PasswordResetRequest, request: Request, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Pide un enlace de reset. Siempre responde 202, exista o no la cuenta.
+
+    Responder distinto según el email exista sería enumerar las cuentas del
+    sistema, así que el cliente recibe siempre el mismo mensaje.
+    """
+    key = f"reset:{_login_key(request, payload.email)}"
+    retry_after = _reset_limiter.retry_after(key)
+    if retry_after:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Has pedido demasiados resets. Inténtalo de nuevo en {retry_after} s.",
+            headers={"Retry-After": str(retry_after)},
+        )
+    generic = {"detail": "Si el email existe, te hemos enviado un enlace para restablecer la contraseña."}
+    user = (await db.execute(select(User).where(User.email == payload.email))).scalar_one_or_none()
+    if user is None:
+        return generic
+
+    # Invalida los tokens anteriores vivos de esa cuenta: solo uno sirve.
+    await db.execute(
+        PasswordResetToken.__table__.update()
+        .where(PasswordResetToken.user_id == user.id, PasswordResetToken.used_at.is_(None))
+        .values(used_at=datetime.now(UTC))
+    )
+    token = PasswordResetToken.new_token()
+    db.add(
+        PasswordResetToken(
+            user_id=user.id,
+            token_hash=PasswordResetToken.hash_token(token),
+            expires_at=datetime.now(UTC) + PasswordResetToken.lifetime(),
+        )
+    )
+    await db.flush()
+    minutes = settings.password_reset_ttl_minutes
+    link = f"{settings.public_app_url.rstrip('/')}/reset-password?token={token}"
+    subject, body = password_reset_body(link, minutes)
+    await send_email(user.email, subject, body)
+    _reset_limiter.record_failure(key)
+    return generic
+
+
+@router.post("/password-reset/confirm")
+async def confirm_password_reset(payload: PasswordResetConfirm, db: AsyncSession = Depends(get_db)) -> dict:
+    """Canjea el token, cambia la contraseña y revoca las sesiones del usuario."""
+    stmt = select(PasswordResetToken).where(
+        PasswordResetToken.token_hash == PasswordResetToken.hash_token(payload.token)
+    )
+    row = (await db.execute(stmt)).scalar_one_or_none()
+    # Mismo mensaje para token inexistente, ya usado o caducado: no damos pistas.
+    invalid = {"detail": "El enlace no es válido o ha caducado. Pide uno nuevo."}
+    if row is None or not row.is_usable():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, **invalid)
+
+    user = (await db.execute(select(User).where(User.id == row.user_id))).scalar_one()
+    user.password_hash = hash_password(payload.new_password)
+    row.used_at = datetime.now(UTC)
+    # Si la contraseña se filtra, las sesiones vivas también deben caer.
+    await db.execute(Session.__table__.delete().where(Session.user_id == user.id))
+    # Los tokens ya canjeados no sirven de nada: se limpian los que sigan vivos.
+    await db.execute(
+        PasswordResetToken.__table__.update()
+        .where(PasswordResetToken.user_id == user.id, PasswordResetToken.used_at.is_(None))
+        .values(used_at=datetime.now(UTC))
+    )
+    return {"detail": "Contraseña actualizada. Ya puedes iniciar sesión."}
 
 
 async def _create_session(db: AsyncSession, user: User) -> tuple[str, Session]:

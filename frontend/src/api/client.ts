@@ -68,6 +68,10 @@ export const api = {
     request<AuthResponse>("/api/auth/login", { method: "POST", body: JSON.stringify(payload) }),
   me: () => request<User>("/api/auth/me"),
   logout: () => request<void>("/api/auth/logout", { method: "POST" }),
+  requestPasswordReset: (payload: { email: string }) =>
+    request<{ detail: string }>("/api/auth/password-reset/request", { method: "POST", body: JSON.stringify(payload) }),
+  confirmPasswordReset: (payload: { token: string; new_password: string }) =>
+    request<{ detail: string }>("/api/auth/password-reset/confirm", { method: "POST", body: JSON.stringify(payload) }),
 };
 
 export interface Task {

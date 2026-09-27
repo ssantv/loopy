@@ -51,5 +51,8 @@ Ver la planificación funcional completa en [`Planteamiento.md`](Planteamiento.m
 
 - Sesiones con token opaco hasheado en BD (`sha256`), sin JWT. TTL 30 días.
 - **Rate limit del login**: 5 intentos fallidos por `(email, IP)` en una ventana de 5 min → `429` con cabecera `Retry-After`. Sólo cuenta los fallos, y un login correcto limpia el contador. Ajustable con `LOGIN_MAX_ATTEMPTS` y `LOGIN_WINDOW_SECONDS` en `.env`.
+- **Reset de contraseña por email** (`/olvide-password`): token de un solo uso guardado hasheado, caduca en 30 min, limitado a 3 peticiones por `(email, IP)`. Al confirmar, se cambia la contraseña y **se revocan todas las sesiones** del usuario.
+  - El endpoint de petición siempre responde `202` con el mismo texto exista o no la cuenta, para no permitir enumerar qué emails están registrados.
+  - Requiere SMTP: con `SMTP_HOST` vacío no se envían correos (en desarrollo el token se registra en el log). **En producción hay que rellenar `SMTP_*` o el reset no llegará a nadie.**
 - Aislamiento por capa de servicio: todas las consultas se filtran por `user_id`.
 - HTTPS con Caddy + Let's Encrypt en el despliegue.

@@ -4,6 +4,8 @@ import Box from "@mui/material/Box";
 import { useAuth } from "./auth/AuthContext";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
+import OlvidePassword from "./pages/OlvidePassword";
+import ResetPassword from "./pages/ResetPassword";
 import Home from "./pages/Home";
 import Colegio from "./pages/Colegio";
 import CheckIn from "./pages/CheckIn";
@@ -55,6 +57,8 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/registro" element={<Register />} />
+      <Route path="/olvide-password" element={<OlvidePassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/" element={<Protected>{<Home />}</Protected>} />
       <Route path="/colegio" element={<ChildOnly>{<Colegio />}</ChildOnly>} />
       <Route path="/checkin" element={<ChildOnly>{<CheckIn />}</ChildOnly>} />

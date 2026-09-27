@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Navigate, Link as RouterLink, useNavigate } from "react-router-dom";
 import Avatar from "@mui/material/Avatar";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -65,7 +65,15 @@ export default function Login() {
           {submitting ? "Entrando…" : "Entrar"}
         </Button>
         <Typography variant="body2" align="center">
-          ¿No tienes cuenta? <Link href="/registro">Regístrate</Link>
+          <Link component={RouterLink} to="/olvide-password">
+            ¿Has olvidado la contraseña?
+          </Link>
+        </Typography>
+        <Typography variant="body2" align="center">
+          ¿No tienes cuenta?{" "}
+          <Link component={RouterLink} to="/registro">
+            Regístrate
+          </Link>
         </Typography>
       </Box>
     </Box>
