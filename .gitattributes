@@ -1,0 +1,32 @@
+# Normalizar finales de linea a LF en el repositorio.
+# Git guarda LF; en Windows se convierte a CRLF solo al sacar el fichero.
+* text=auto eol=lf
+
+# Ficheros que deben ser LF siempre (scripts y configs)
+*.sh text eol=lf
+*.py text eol=lf
+*.mjs text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.ini text eol=lf
+*.md text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+
+# Los ficheros de peticion de PR de GitHub nunca CRLF
+.github/** text eol=lf
+
+# Ficheros que GitHub trata como binarios: no tocar
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
