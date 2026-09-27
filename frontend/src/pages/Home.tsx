@@ -6,6 +6,7 @@ import {
   pushApi,
   urlBase64ToUint8Array,
   subjectApi,
+  type Exam,
   type Task,
   examApi,
   type PlanItem,
@@ -80,6 +81,27 @@ function todayISO(): string {
   return `${y}-${m}-${day}`;
 }
 
+function parseDay(d: string): Date {
+  return new Date(d + "T00:00:00");
+}
+
+function daysBetween(fromISO: string, toISO: string): number {
+  return Math.round((parseDay(toISO).getTime() - parseDay(fromISO).getTime()) / 86400000);
+}
+
+function fmtShortDate(d: string): string {
+  return parseDay(d).toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" });
+}
+
+function countdownLabel(targetISO: string, today: string, noun: string): string {
+  const diff = daysBetween(today, targetISO);
+  if (diff === 0) return `¡${noun} es hoy!`;
+  if (diff === 1) return `${noun} mañana`;
+  return `${noun} en ${diff} días`;
+}
+
+const SCHOOL_CATEGORIES = ["colegio-deberes", "colegio-trabajo"];
+
 function toTaskState(task: Task, today: string): "hoy" | "hecho" | "atrasada" | "adelantada" | null {
   if (task.done.includes(today)) return "hecho";
   if (task.due_on && !task.rec_type) {
@@ -101,6 +123,7 @@ export default function Home() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [examPlanItems, setExamPlanItems] = useState<{ item: PlanItem; subject: string; examId: number }[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [exams, setExams] = useState<Exam[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [atrasadasOpen, setAtrasadasOpen] = useState(false);
@@ -114,22 +137,24 @@ export default function Home() {
     setLoading(true);
     setError(null);
     try {
-      let examItems: { item: PlanItem; subject: string; examId: number }[] = [];
-      let subjectRows: Subject[] = [];
-      if (user?.profile_type === "child") {
-        subjectRows = await subjectApi.list();
-        const exams = await examApi.list();
-        for (const ex of exams) {
-          if (ex.exam_date >= today) {
-            const plan = await examApi.plan(ex.id, today, today);
-            examItems.push(...plan.items.map((item) => ({ item, subject: plan.subject.name, examId: ex.id })));
-          }
+    let examItems: { item: PlanItem; subject: string; examId: number }[] = [];
+    let subjectRows: Subject[] = [];
+    let examRows: Exam[] = [];
+    if (user?.profile_type === "child") {
+      subjectRows = await subjectApi.list();
+      examRows = await examApi.list();
+      for (const ex of examRows) {
+        if (ex.exam_date >= today) {
+          const plan = await examApi.plan(ex.id, today, today);
+          examItems.push(...plan.items.map((item) => ({ item, subject: plan.subject.name, examId: ex.id })));
         }
       }
-      const [tasksResult] = await Promise.all([taskApi.list(today), Promise.resolve(examItems)]);
-      setTasks(tasksResult);
-      setExamPlanItems(examItems);
-      setSubjects(subjectRows);
+    }
+    const [tasksResult] = await Promise.all([taskApi.list(today), Promise.resolve(examItems)]);
+    setTasks(tasksResult);
+    setExamPlanItems(examItems);
+    setSubjects(subjectRows);
+    setExams(examRows);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error al cargar tareas");
     } finally {
@@ -156,6 +181,24 @@ export default function Home() {
     const bySort = (a: Task, b: Task) => a.sort - b.sort || a.created_at.localeCompare(b.created_at);
     return { hoy: hoy.sort(bySort), hecho: hecho.sort(bySort), atrasadas: atrasadas.sort(bySort), adelantadas: adelantadas.sort(bySort) };
   }, [tasks, today]);
+
+  // Deberes/trabajos de colegio aún no hechos. Excluye los de hoy, que ya
+  // aparecen arriba en "Qué toca hoy", para no repetir la misma línea.
+  const colegio = useMemo(() => {
+    const hoyIds = new Set(groups.hoy.map((t) => t.id));
+    return tasks
+      .filter((t) => SCHOOL_CATEGORIES.includes(t.category))
+      .filter((t) => !hoyIds.has(t.id))
+      .filter((t) => toTaskState(t, today) !== "hecho")
+      .sort((a, b) => (a.due_on ?? "9999").localeCompare(b.due_on ?? "9999") || a.sort - b.sort);
+  }, [tasks, today, groups.hoy]);
+
+  const proximosExamenes = useMemo(() => {
+    return exams
+      .filter((e) => e.exam_date >= today)
+      .sort((a, b) => a.exam_date.localeCompare(b.exam_date))
+      .slice(0, 4);
+  }, [exams, today]);
 
   const toggle = useCallback(
     async (task: Task, doneOn: string) => {
@@ -233,14 +276,9 @@ export default function Home() {
             </>
           )}
           {user?.profile_type === "child" && (
-            <>
-              <Button color="inherit" size="small" component={Link} to="/checkin">
-                + Check-in
-              </Button>
-              <Button color="inherit" size="small" component={Link} to="/colegio">
-                Colegio
-              </Button>
-            </>
+            <Button color="inherit" size="small" component={Link} to="/checkin">
+              + Check-in
+            </Button>
           )}
           <Button color="inherit" size="small" component={Link} to="/pendientes">
             Pendientes
@@ -369,6 +407,87 @@ export default function Home() {
               </section>
             )}
 
+            {user?.profile_type === "child" && (
+              <>
+                <section>
+                  <Divider sx={{ mb: 1 }} />
+                  <Typography variant="h6" sx={{ mb: 1 }}>
+                    Próximos exámenes
+                  </Typography>
+                  {proximosExamenes.length === 0 ? (
+                    <Alert severity="info" sx={{ borderRadius: 2 }}>
+                      No hay exámenes previstos. Pídele a un adulto que añada uno en Colegio.
+                    </Alert>
+                  ) : (
+                    <List sx={{ p: 0 }}>
+                      {proximosExamenes.map((ex) => {
+                        const done = ex.exam_date < today;
+                        return (
+                          <ListItem key={ex.id} disablePadding sx={{ mb: 0.5 }}>
+                            <Box
+                              sx={{
+                                width: "100%",
+                                border: 1,
+                                borderColor: ex.exam_date === today ? "error.main" : "divider",
+                                borderRadius: 2,
+                                px: 1.5,
+                                py: 1,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 1,
+                                flexWrap: "wrap",
+                              }}
+                            >
+                              <Typography sx={{ fontWeight: 600 }}>{ex.subject_name ?? "Examen"}</Typography>
+                              <Chip
+                                size="small"
+                                label={countdownLabel(ex.exam_date, today, "Examen")}
+                                sx={{
+                                  bgcolor: done ? "#9e9e9e" : ex.exam_date === today ? "error.main" : "primary.main",
+                                  color: "#fff",
+                                  height: 22,
+                                }}
+                              />
+                              <Typography variant="body2" color="text.secondary" sx={{ ml: "auto" }}>
+                                {fmtShortDate(ex.exam_date)}
+                              </Typography>
+                            </Box>
+                          </ListItem>
+                        );
+                      })}
+                    </List>
+                  )}
+                  <Box sx={{ mt: 1 }}>
+                    <Button size="small" component={Link} to="/colegio">
+                      Gestionar colegio
+                    </Button>
+                  </Box>
+                </section>
+
+                {colegio.length > 0 && (
+                  <section>
+                    <Divider sx={{ mb: 1 }} />
+                    <Typography variant="h6" sx={{ mb: 1 }}>
+                      Deberes y trabajos ({colegio.length})
+                    </Typography>
+                    <List sx={{ p: 0 }}>
+                      {colegio.map((t) => (
+                        <TaskRow
+                          key={t.id}
+                          task={t}
+                          today={today}
+                          onToggle={toggle}
+                          sx={listItemSx}
+                          dueLabel={t.due_on ? countdownLabel(t.due_on, today, "Entrega") : "Sin fecha"}
+                          overdue={!!t.due_on && t.due_on < today}
+                        />
+                      ))}
+                    </List>
+                  </section>
+                )}
+              </>
+            )}
+
             <PushSection />
           </Stack>
         )}
@@ -450,6 +569,8 @@ function TaskRow({
   sx,
   muted,
   done: doneProp,
+  dueLabel,
+  overdue,
 }: {
   task: Task;
   today: string;
@@ -457,6 +578,8 @@ function TaskRow({
   sx?: SxProps;
   muted?: boolean;
   done?: boolean;
+  dueLabel?: string;
+  overdue?: boolean;
 }) {
   const doneOn = task.due_on && !task.rec_type ? task.due_on : task.pending ?? today;
   const done = doneProp ?? task.done.includes(doneOn);
@@ -500,11 +623,24 @@ function TaskRow({
         />
       </ListItemButton>
       <ListItemSecondaryAction>
-        {task.notes ? (
-          <Typography variant="caption" color="text.secondary" sx={{ pr: 1 }}>
-            {task.notes}
-          </Typography>
-        ) : null}
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          {task.notes ? (
+            <Typography variant="caption" color="text.secondary">
+              {task.notes}
+            </Typography>
+          ) : null}
+          {dueLabel ? (
+            <Chip
+              size="small"
+              label={dueLabel}
+              sx={{
+                bgcolor: overdue ? "error.main" : "action.hover",
+                color: overdue ? "#fff" : "text.primary",
+                height: 20,
+              }}
+            />
+          ) : null}
+        </Stack>
       </ListItemSecondaryAction>
     </ListItem>
   );

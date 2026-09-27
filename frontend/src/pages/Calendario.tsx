@@ -317,7 +317,7 @@ function DayCell({
   const header = (
     <Stack direction="row" spacing={0.5} alignItems="center">
       <Typography variant="caption" sx={{ fontWeight: isToday ? 700 : 400 }}>
-        {compact ? date.getDate() : WEEKDAY_LABEL[(date.getDay() + 6) % 7]} {date.getDate()}
+        {compact ? date.getDate() : `${WEEKDAY_LABEL[(date.getDay() + 6) % 7]} ${date.getDate()}`}
       </Typography>
       <Button size="small" sx={{ ml: "auto", minWidth: 0, p: 0 }} onClick={() => onAddSession(dayISO)}>
         +
