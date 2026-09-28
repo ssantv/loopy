@@ -44,7 +44,14 @@ class Subject(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     name: Mapped[str] = mapped_column(String(80), nullable=False)
     color: Mapped[str | None] = mapped_column(String(7), nullable=True)
-    # Fases del plan de estudio (días) — por asignatura, no por categoría.
+    # Tiempo de preparacion, en minutos. Es la unidad REAL que configura quien
+    # usa la app ("Matematicas unas 3 horas"); el numero de dias del plan se
+    # deriva de aqui. `session_minutes` es la duracion de una sesion.
+    prep_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=120)
+    session_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    # Reparto del plan entre fases, como PESOS relativos (no dias literales):
+    # con 1,1,1,1 cada fase se lleva la cuarta parte de las sesiones.
+    # Practica a 0 si la asignatura no la necesita.
     days_resumen: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     days_estudio: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     days_practica: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

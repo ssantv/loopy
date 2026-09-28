@@ -76,6 +76,10 @@ async def _mk_subject(env, **kw) -> int:
         "days_practica": kw.get("days_practica", 1),
         "days_repaso": kw.get("days_repaso", 1),
     }
+    if "prep_minutes" in kw:
+        payload["prep_minutes"] = kw["prep_minutes"]
+    if "session_minutes" in kw:
+        payload["session_minutes"] = kw["session_minutes"]
     if "resumen_total_pages" in kw:
         payload["resumen_total_pages"] = kw["resumen_total_pages"]
     r = await env.client.post("/api/subjects", json=payload)
@@ -190,3 +194,87 @@ async def test_delete_session_no_existente(env):
     r = await env.client.delete(f"/api/subjects/{sid}/sessions/2026-09-24")
     assert r.status_code == 200
     assert r.json()["removed"] is False
+
+
+# ---------------------------------------------------------------- tiempos
+
+async def test_subject_tiene_tiempo_por_defecto(env):
+    """Si no se dice nada, la asignatura propone 2h en sesiones de 30min."""
+    await _authed(env)
+    sid = await _mk_subject(env)
+    r = await env.client.get("/api/subjects")
+    s = next(x for x in r.json() if x["id"] == sid)
+    assert s["prep_minutes"] == 120
+    assert s["session_minutes"] == 30
+
+
+async def test_examen_usa_el_tiempo_de_su_asignatura(env):
+    await _authed(env)
+    sid = await _mk_subject(env, prep_minutes=180, session_minutes=30)
+    eid = await _mk_exam(env, sid, date(2026, 10, 20))
+    r = await env.client.get(f"/api/exams/{eid}/plan", params={"from": "2026-09-28"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # 180min / 30min = 6 sesiones
+    assert body["subject"]["prep_minutes"] == 180
+    assert body["progress"]["total_sessions"] == 6
+    assert body["progress"]["total_minutes"] == 180
+    assert body["progress"]["pending_sessions"] == 6
+    assert body["progress"]["pending_minutes"] == 180
+    assert body["progress"]["session_minutes"] == 30
+
+
+async def test_examen_puede_pedir_mas_tiempo_que_su_asignatura(env):
+    """El caso que pide el usuario: un examen concreto necesita mas."""
+    await _authed(env)
+    sid = await _mk_subject(env, prep_minutes=120, session_minutes=30)
+    eid = await _mk_exam(env, sid, date(2026, 10, 20))
+    r = await env.client.patch(f"/api/exams/{eid}", json={"prep_minutes_override": 300})
+    assert r.status_code == 200, r.text
+    assert r.json()["prep_minutes_override"] == 300
+
+    plan = await env.client.get(f"/api/exams/{eid}/plan", params={"from": "2026-09-28"})
+    body = plan.json()
+    # 300/30 = 10 sesiones, no las 4 de la asignatura
+    assert body["subject"]["prep_minutes"] == 300
+    assert body["progress"]["total_sessions"] == 10
+
+
+async def test_quitar_el_override_vuelve_al_de_la_asignatura(env):
+    await _authed(env)
+    sid = await _mk_subject(env, prep_minutes=120, session_minutes=30)
+    eid = await _mk_exam(env, sid, date(2026, 10, 20))
+    await env.client.patch(f"/api/exams/{eid}", json={"prep_minutes_override": 300})
+    r = await env.client.patch(f"/api/exams/{eid}", json={"prep_minutes_override": None})
+    assert r.status_code == 200, r.text
+    assert r.json()["prep_minutes_override"] is None
+    body = (await env.client.get(f"/api/exams/{eid}/plan", params={"from": "2026-09-28"})).json()
+    assert body["subject"]["prep_minutes"] == 120
+    assert body["progress"]["total_sessions"] == 4
+
+
+async def test_el_plan_informa_de_los_minutos_pendientes(env):
+    await _authed(env)
+    sid = await _mk_subject(env, prep_minutes=180, session_minutes=30)
+    eid = await _mk_exam(env, sid, date(2026, 10, 20))
+    body = (await env.client.get(f"/api/exams/{eid}/plan", params={"from": "2026-09-28"})).json()
+    assert all(i["minutes"] == 30 for i in body["items"])
+
+
+async def test_se_puede_editar_el_tiempo_de_la_asignatura(env):
+    await _authed(env)
+    sid = await _mk_subject(env)
+    r = await env.client.patch(f"/api/subjects/{sid}", json={"prep_minutes": 240, "session_minutes": 45})
+    assert r.status_code == 200, r.text
+    assert r.json()["prep_minutes"] == 240
+    assert r.json()["session_minutes"] == 45
+
+
+async def test_curso_del_nino_se_guarda(env):
+    tok = await _register_and_login(env, "peque@test.com")
+    env.client.headers["Authorization"] = f"Bearer {tok}"
+    r = await env.client.patch("/api/auth/me", json={"course": "4º de Primaria"})
+    assert r.status_code == 200, r.text
+    assert r.json()["course"] == "4º de Primaria"
+    me = await env.client.get("/api/auth/me")
+    assert me.json()["course"] == "4º de Primaria"

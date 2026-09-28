@@ -25,6 +25,9 @@ class Exam(Base):
     subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id", ondelete="CASCADE"), index=True, nullable=False)
     exam_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Si este examen concreto necesita mas (o menos) tiempo que su asignatura,
+    # se pisa aqui el total. NULL = usa el de la asignatura.
+    prep_minutes_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     subject: Mapped[Subject] = relationship()

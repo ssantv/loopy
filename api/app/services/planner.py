@@ -46,7 +46,12 @@ from datetime import date, timedelta
 
 @dataclass(frozen=True)
 class ExamPlanCfg:
-    """Parámetros de planificación extraídos de una asignatura."""
+    """Parámetros de planificación ya resueltos a **días por fase**.
+
+    El número que configura quien usa la app son minutos (`Subject.prep_minutes`);
+    los días de aquí se derivan con `from_minutes`, que reparte las sesiones entre
+    las fases según sus pesos.
+    """
 
     days_resumen: int = 1
     days_estudio: int = 1
@@ -54,26 +59,89 @@ class ExamPlanCfg:
     days_repaso: int = 1
     include_weekends: bool = True
     resumen_total_pages: int | None = None  # NULL => resumen como trabajo largo
+    # Duración de una sesión, para poder hablar en minutos en la interfaz.
+    session_minutes: int = 30
+    # Minutos totales que justifican este plan (ya con el override del examen aplicado).
+    prep_minutes: int = 120
+
+    @property
+    def total_days(self) -> int:
+        return self.days_resumen + self.days_estudio + self.days_practica + self.days_repaso
+
+    @property
+    def total_sessions(self) -> int:
+        """Sesiones que salen de los minutos configurados."""
+        if self.session_minutes <= 0:
+            return self.total_days
+        return max(1, -(-self.prep_minutes // self.session_minutes))  # ceil
 
     @classmethod
     def as_rule(cls, obj) -> ExamPlanCfg:
-        return cls(
-            days_resumen=obj.days_resumen,
-            days_estudio=obj.days_estudio,
-            days_practica=obj.days_practica,
-            days_repaso=obj.days_repaso,
+        return cls.from_minutes(
+            prep_minutes=obj.prep_minutes,
+            session_minutes=obj.session_minutes,
+            weights=(obj.days_resumen, obj.days_estudio, obj.days_practica, obj.days_repaso),
             include_weekends=obj.include_weekends,
             resumen_total_pages=obj.resumen_total_pages,
+        )
+
+    @classmethod
+    def from_minutes(
+        cls,
+        *,
+        prep_minutes: int,
+        session_minutes: int,
+        weights: tuple[int, int, int, int] = (1, 1, 1, 1),
+        include_weekends: bool = True,
+        resumen_total_pages: int | None = None,
+    ) -> ExamPlanCfg:
+        """Convierte "necesito N minutos" en días por fase.
+
+        - sesiones = ceil(prep_minutes / session_minutes), mínimo 1. Un examen nunca
+          se queda sin plan por mucho que el tiempo sea pequeño.
+        - Las sesiones se reparten entre las fases según `weights`. Un peso de 0
+          descarta la fase (p. ej. "Práctica a 0 si la asignatura no la necesita").
+        - El sobrante se reparte por resto mayor, y a igualdad gana la fase más
+          temprana, para que el reparto sea determinista.
+        """
+        prep_minutes = max(0, prep_minutes)
+        session_minutes = max(1, session_minutes)
+        sessions = max(1, -(-prep_minutes // session_minutes))
+
+        w = [max(0, x) for x in weights]
+        total_w = sum(w)
+        if total_w == 0:
+            # Sin pesos declarados: reparto equitativo.
+            w, total_w = [1, 1, 1, 1], 4
+
+        exact = [sessions * x / total_w for x in w]
+        base = [int(x) for x in exact]
+        rest = sessions - sum(base)
+        # Índice de las fases que se llevan el sobrante: mayor resto, y a igualdad la más temprana.
+        order = sorted(range(4), key=lambda i: (-(exact[i] - base[i]), i))
+        for i in order[:rest]:
+            base[i] += 1
+
+        return cls(
+            days_resumen=base[0],
+            days_estudio=base[1],
+            days_practica=base[2],
+            days_repaso=base[3],
+            include_weekends=include_weekends,
+            resumen_total_pages=resumen_total_pages,
+            session_minutes=session_minutes,
+            prep_minutes=prep_minutes,
         )
 
 
 @dataclass(frozen=True)
 class PlanItem:
-    """Un día del plan de un examen."""
+    """Un día del plan de un examen (un día = una sesión)."""
 
     date: date
     phase: str  # repaso-final | repaso | practica | estudio | resumen
     offset: int  # X = distancia en días válidos hacia atrás desde D−1
+    minutes: int = 30  # duración de la sesión de ese día
 
 
 def resumen_complete(cfg: ExamPlanCfg, done_pages: int) -> bool:
@@ -132,7 +200,7 @@ def plan_day(
         phase = "resumen"
     else:
         return None
-    return PlanItem(date=day, phase=phase, offset=x)
+    return PlanItem(date=day, phase=phase, offset=x, minutes=cfg.session_minutes)
 
 
 def plan_span(
@@ -153,3 +221,36 @@ def plan_span(
             items.append(item)
         d += timedelta(days=1)
     return items
+
+
+def plan_progress(
+    exam_date: date,
+    cfg: ExamPlanCfg,
+    done_dates: set[date] | None = None,
+    today: date | None = None,
+    resumen_done_pages: int = 0,
+) -> dict:
+    """Cómo va el plan en minutos y sesiones, para poder decirlo en la interfaz.
+
+    `done_dates` son los días ya completados (o saltados: cuentan como hechos).
+    Devuelve totales y lo que queda pendiente **a partir de hoy**, que es lo que
+    de verdad le importa a quien lo mira.
+    """
+    done_dates = done_dates or set()
+    today = today or date.today()
+    # Plan completo (no solo desde hoy): si no, los días que ya quedaron atrás se
+    # contarían como neither hechos ni pendientes.
+    items = plan_span(exam_date, cfg, resumen_done_pages=resumen_done_pages)
+
+    done = [i for i in items if i.date in done_dates]
+    pending = [i for i in items if i.date >= today and i.date not in done_dates]
+
+    return {
+        "session_minutes": cfg.session_minutes,
+        "prep_minutes": cfg.prep_minutes,
+        "total_sessions": len(items),
+        "total_minutes": sum(i.minutes for i in items),
+        "done_sessions": len(done),
+        "pending_sessions": len(pending),
+        "pending_minutes": sum(i.minutes for i in pending),
+    }

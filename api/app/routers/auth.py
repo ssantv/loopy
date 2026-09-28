@@ -15,6 +15,7 @@ from app.schemas.auth import (
     LoginRequest,
     PasswordResetConfirm,
     PasswordResetRequest,
+    ProfileUpdate,
     RegisterRequest,
     UserOut,
 )
@@ -133,6 +134,18 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
     return UserOut(**user_out_dict(user))
 
 
+@router.patch("/me", response_model=UserOut)
+async def update_me(
+    payload: ProfileUpdate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> UserOut:
+    """Actualiza el perfil (nombre, curso). Solo cambia lo que viene informado."""
+    for k, v in payload.model_dump(exclude_unset=True).items():
+        setattr(user, k, v)
+    await db.commit()
+    await db.refresh(user)
+    return UserOut(**user_out_dict(user))
+
+
 @router.post("/password-reset/request", status_code=status.HTTP_202_ACCEPTED)
 async def request_password_reset(
     payload: PasswordResetRequest, request: Request, db: AsyncSession = Depends(get_db)
@@ -222,6 +235,7 @@ def user_out_dict(user: User) -> dict:
         "email": user.email,
         "profile_type": user.profile_type,
         "display_name": user.display_name,
+        "course": user.course,
         "timezone": user.timezone,
         "notification_tone": user.notification_tone,
         "tone_source": user.tone_source,

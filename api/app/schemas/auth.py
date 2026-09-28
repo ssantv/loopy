@@ -24,11 +24,19 @@ class UserOut(BaseModel):
     email: EmailStr
     profile_type: str
     display_name: str | None
+    course: str | None = None
     timezone: str
     notification_tone: str
     tone_source: str
     age: int | None
     created_at: datetime
+
+
+class ProfileUpdate(BaseModel):
+    """Edición del perfil. Solo lo que se envía cambia."""
+
+    display_name: str | None = Field(default=None, max_length=80)
+    course: str | None = Field(default=None, max_length=80)
 
 
 class AuthResponse(BaseModel):

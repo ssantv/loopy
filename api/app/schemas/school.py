@@ -10,12 +10,15 @@ class ExamCreate(BaseModel):
     subject_id: int
     exam_date: date
     notes: str | None = None
+    # Si este examen necesita mas (o menos) tiempo que su asignatura.
+    prep_minutes_override: int | None = Field(default=None, ge=0, le=100000)
 
 
 class ExamUpdate(BaseModel):
     subject_id: int | None = None
     exam_date: date | None = None
     notes: str | None = None
+    prep_minutes_override: int | None = Field(default=None, ge=0, le=100000)
 
 
 class ExamOut(BaseModel):
@@ -24,6 +27,7 @@ class ExamOut(BaseModel):
     subject_name: str | None = None
     exam_date: date
     notes: str | None
+    prep_minutes_override: int | None = None
     created_at: datetime
 
 
@@ -65,6 +69,19 @@ class PlanItemOut(BaseModel):
     status: str | None = Field(default=None, description="done | skip | None (pendiente)")
     done_at: datetime | None = None
     label: str | None = None  # p.ej. "remata el resumen (llevas X de Y hojas)"
+    minutes: int = 30  # duración de la sesión de ese día
+
+
+class PlanProgressOut(BaseModel):
+    """El plan en minutos y sesiones, para poder decirlo sin jerga."""
+
+    session_minutes: int
+    prep_minutes: int
+    total_sessions: int
+    total_minutes: int
+    done_sessions: int
+    pending_sessions: int
+    pending_minutes: int
 
 
 class ExamPlanOut(BaseModel):
@@ -75,6 +92,7 @@ class ExamPlanOut(BaseModel):
     resumen_total_pages: int | None
     resumen_omitted: bool
     resumen_partial: bool
+    progress: PlanProgressOut
 
 
 class ExtracurricularCreate(BaseModel):

@@ -25,7 +25,7 @@ from app.schemas.school import (
     SubjectSessionRequest,
 )
 from app.services.engine import as_rules, scheduled_dates_between
-from app.services.planner import ExamPlanCfg, plan_span, resumen_complete
+from app.services.planner import ExamPlanCfg, plan_progress, plan_span, resumen_complete
 
 router = APIRouter(prefix="/api", tags=["colegio"])
 
@@ -55,6 +55,7 @@ def _exam_out(exam: Exam, subject: Subject | None = None) -> ExamOut:
         subject_name=subject.name if subject is not None else None,
         exam_date=exam.exam_date,
         notes=exam.notes,
+        prep_minutes_override=exam.prep_minutes_override,
         created_at=exam.created_at,
     )
 
@@ -69,6 +70,23 @@ def _resumen_label(subject: Subject, phase: str, done_pages: int) -> str | None:
 
 
 # ---------------------------------------------------------------- exams
+
+def _cfg_for(subject: Subject, exam: Exam | None = None) -> ExamPlanCfg:
+    """Config del plan de un examen: la de su asignatura, con el override si lo hay.
+
+    Un examen puede necesitar mas (o menos) tiempo que su asignatura, y eso se
+    guarda en `Exam.prep_minutes_override`.
+    """
+    if exam is not None and exam.prep_minutes_override is not None:
+        return ExamPlanCfg.from_minutes(
+            prep_minutes=exam.prep_minutes_override,
+            session_minutes=subject.session_minutes,
+            weights=(subject.days_resumen, subject.days_estudio, subject.days_practica, subject.days_repaso),
+            include_weekends=subject.include_weekends,
+            resumen_total_pages=subject.resumen_total_pages,
+        )
+    return ExamPlanCfg.as_rule(subject)
+
 
 @router.post("/exams", response_model=ExamOut, status_code=status.HTTP_201_CREATED)
 async def create_exam(
@@ -111,7 +129,11 @@ async def update_exam(
     exam_id: int, payload: ExamUpdate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ) -> ExamOut:
     exam = await _owned_exam(exam_id, user, db)
+    # `exclude_unset` deja pasar un null explicito solo para el override: asi se
+    # puede volver al tiempo de la asignatura (si no, el filtro lo haria imposible).
     changes = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+    if "prep_minutes_override" in payload.model_dump(exclude_unset=True):
+        changes["prep_minutes_override"] = payload.prep_minutes_override
     if "subject_id" in changes:
         await _owned_subject(changes["subject_id"], user, db)
     for k, v in changes.items():
@@ -142,13 +164,21 @@ async def exam_plan(
 ) -> ExamPlanOut:
     exam = await _owned_exam(exam_id, user, db)
     subject = await _owned_subject(exam.subject_id, user, db)
-    cfg = ExamPlanCfg.as_rule(subject)
+    cfg = _cfg_for(subject, exam)
 
     start = from_date or datetime.now(UTC).date()
     end = to or (exam.exam_date - timedelta(days=1))
 
     done = (await db.execute(select(StudyCompletion).where(StudyCompletion.exam_id == exam.id))).scalars().all()
     done_by_date = {d.date: d for d in done}
+
+    prog = plan_progress(
+        exam.exam_date,
+        cfg,
+        done_dates={d.date for d in done if d.status in ("done", "skip")},
+        today=start,
+        resumen_done_pages=subject.resumen_done_pages,
+    )
 
     items: list[PlanItemOut] = []
     for item in plan_span(exam.exam_date, cfg, start, end, subject.resumen_done_pages):
@@ -161,6 +191,7 @@ async def exam_plan(
                 status=comp.status if comp else None,
                 done_at=comp.done_at if comp else None,
                 label=_resumen_label(subject, item.phase, subject.resumen_done_pages),
+                minutes=item.minutes,
             )
         )
 
@@ -170,12 +201,19 @@ async def exam_plan(
 
     return ExamPlanOut(
         exam=_exam_out(exam, subject),
-        subject={"id": subject.id, "name": subject.name, "color": subject.color},
+        subject={
+            "id": subject.id,
+            "name": subject.name,
+            "color": subject.color,
+            "prep_minutes": cfg.prep_minutes,
+            "session_minutes": cfg.session_minutes,
+        },
         items=items,
         resumen_done_pages=subject.resumen_done_pages,
         resumen_total_pages=total,
         resumen_omitted=omitted,
         resumen_partial=partial,
+        progress=prog,
     )
 
 
@@ -445,7 +483,7 @@ async def calendar(
 
     for ex in exams:
         subject = subjects.get(ex.subject_id)
-        cfg = ExamPlanCfg.as_rule(subject) if subject is not None else ExamPlanCfg()
+        cfg = _cfg_for(subject, ex) if subject is not None else ExamPlanCfg()
         done_pages = subject.resumen_done_pages if subject is not None else 0
         done_by_date = completed_by_exam.get(ex.id, {})
         items = plan_span(ex.exam_date, cfg, start, end, done_pages)

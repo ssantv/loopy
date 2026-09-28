@@ -25,6 +25,8 @@ class User(Base):
     # Perfil que configura la cuenta: adult | child
     profile_type: Mapped[str] = mapped_column(String(8), nullable=False, default="adult")
     display_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # Curso del niño ("4º de Primaria"). Solo informativo: se pinta en el perfil.
+    course: Mapped[str | None] = mapped_column(String(80), nullable=True)
     # Zona horaria del usuario (IANA, p.ej. "Europe/Madrid").
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="UTC")
     # Notificaciones: tono y origen (auto según edad, o manual).

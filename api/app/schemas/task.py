@@ -107,6 +107,10 @@ class RoomOut(BaseModel):
 class SubjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     color: str | None = Field(default=None, pattern="^#[0-9a-fA-F]{6}$")
+    # Tiempo de preparacion en minutos: la unidad que se configura. El numero de
+    # dias del plan se deriva de aqui (ver planner.ExamPlanCfg.from_minutes).
+    prep_minutes: int = Field(default=120, ge=0, le=100000)
+    session_minutes: int = Field(default=30, ge=5, le=600)
     days_resumen: int = Field(default=1, ge=0)
     days_estudio: int = Field(default=1, ge=0)
     days_practica: int = Field(default=1, ge=0)
@@ -118,6 +122,8 @@ class SubjectCreate(BaseModel):
 class SubjectUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=80)
     color: str | None = Field(default=None, pattern="^#[0-9a-fA-F]{6}$")
+    prep_minutes: int | None = Field(default=None, ge=0, le=100000)
+    session_minutes: int | None = Field(default=None, ge=5, le=600)
     days_resumen: int | None = Field(default=None, ge=0)
     days_estudio: int | None = Field(default=None, ge=0)
     days_practica: int | None = Field(default=None, ge=0)
@@ -130,6 +136,8 @@ class SubjectOut(BaseModel):
     id: int
     name: str
     color: str | None
+    prep_minutes: int
+    session_minutes: int
     days_resumen: int
     days_estudio: int
     days_practica: int
