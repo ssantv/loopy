@@ -60,6 +60,7 @@ export function subItems(isChild: boolean): NavItem[] {
     return [
       { to: "/colegio", label: "Colegio", icon: <SchoolIcon /> },
       { to: "/checkin", label: "Check-in", icon: <PersonIcon /> },
+      { to: "/perfil", label: "Perfil", icon: <PersonIcon /> },
     ];
   }
   return [

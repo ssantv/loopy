@@ -83,19 +83,20 @@ Documento de referencia del proyecto. Todo lo que hay aquí es el contrato de pr
 
 ### 2.4 Módulo colegio (niño)
 
-**`subjects`** — `id`, `user_id`, `name`, `color`, `include_weekends` bool (def true), y **fases configurables por asignatura** (no todas las asignaturas necesitan lo mismo):
-- `days_resumen` (def 1)
-- `days_estudio` (def 1) — puede ser 2 o más si la asignatura lo exige
-- `days_practica` (def 1) — **práctica** = ejercicios prácticos (listening en inglés, resolución de problemas en mates…); algunas asignaturas no la requieren (0)
-- `days_repaso` (def 1) — repaso
+**`subjects`** — `id`, `user_id`, `name`, `color`, `include_weekends` bool (def true), y **el tiempo que cuesta preparar la asignatura**:
+- `prep_minutes` (def 120) — **el número que se configura de verdad**: "Matemáticas unas 3 horas". Nadie piensa "este examen tiene dos días de repaso"; se piensa en tiempo.
+- `session_minutes` (def 30) — duración de una sesión. El número de sesiones sale de `ceil(prep_minutes / session_minutes)`, con mínimo 1 (un examen nunca se queda sin plan, ni con tiempo 0).
+- `days_resumen` / `days_estudio` / `days_practica` / `days_repaso` (def 1) — **ahora son pesos relativos, no días literales**. Reparten las sesiones entre fases: `1,1,1,1` = a partes iguales, y un peso de 0 descarta la fase (**práctica** = ejercicios prácticos (listening en inglés, resolución de problemas en mates…); algunas asignaturas no la requieren). El reparto es exacto por resto mayor y, a igualdad, gana la fase más temprana.
 - **Resumen progresivo**: `resumen_total_pages` (def NULL, "¿cuántas hojas tiene el tema?") y `resumen_done_pages` (def 0).
 **Sin agrupación por categorías.**
 
-**`exams`** — `id`, `user_id`, `subject_id` FK, `exam_date`, `notes`.
+**`exams`** — `id`, `user_id`, `subject_id` FK, `exam_date`, `notes`, y `prep_minutes_override` (def NULL) — si este examen concreto necesita **más (o menos) tiempo que su asignatura**. Es el caso de un temazo puntual; solo afecta a ese examen, y se puede borrar con `null` explícito para volver al valor de la asignatura.
 
 **El plan de estudio es una función pura que se calcula en tiempo de consulta** — no se materializa ni se regenera nada. `plan(examen, asignatura) → [(fecha, fase)]`:
 
-Para un examen en día D con asignatura (resumen=S, estudio=E, práctica=P, repaso=R), solo depende del desplazamiento `X = D − fecha`:
+La resolución es en dos pasos: **minutos → sesiones → reparto por fases** (`ExamPlanCfg.from_minutes`). El contrato de fases que viene a continuación opera sobre los días ya repartidos.
+
+Con las sesiones ya repartidas entre fases (resumen=S, estudio=E, práctica=P, repaso=R), el reparto en el calendario solo depende del desplazamiento `X = D − fecha`:
 
 ```
 X = 1                        → repaso-final   (fijo, no movible, por construcción)
@@ -106,12 +107,14 @@ X ∈ [2+R+P+E, 1+R+P+E+S]     → resumen
 X fuera de ese rango          → sin plan
 ```
 
-Ejemplo con (resumen=1, estudio=1, práctica=1, repaso=1) — examen el 25/09:
+Ejemplo: 120 min con sesiones de 30 min → 4 sesiones, repartidas `1,1,1,1` → examen el 25/09:
 
 ```
 21/09 | 22/09 | 23/09   | 24/09          | 25/09
 resumen|estudio|práctica| repaso FINAL fijo | D (examen)
 ```
+
+Una asignatura de 20 minutos con sesiones de 30 no desaparece: `ceil(20/30) = 1` sesión, así que siempre hay al menos un día de plan.
 
 (Con la fórmula del enunciado original: resumen 2, estudio 4, repaso 3 → `D-10 D-9 | D-8…D-5 | D-4…D-2 | D-1` donde estudio=4, resumen=2, repaso=3.)
 
@@ -219,7 +222,7 @@ Una tarea aparece en el día D si `rec_next_due <= D` y no está completada. Mie
 
 - **Deberes**: mismo día por defecto, `pending_from_class` arriba; `est_minutes` para el plan de la tarde. Alta desde check-in o sección.
 - **Trabajos largos**: sugerencia de avance en días de poca carga (carga = minutos totales de obligatorias + bloqueos extraescolares), 20–45 min/día, "proyecto más en riesgo". Nunca obligatorio.
-- **Exámenes**: configuración **por asignatura** (resumen/estudio/práctica/repaso), no por categoría — no todas las asignaturas necesitan lo mismo (inglés hace listening, mates resuelve problemas; algunas no requieren práctica). El plan se **calcula en tiempo de consulta** (con repaso final fijo en D-1 y asignación de los demás días justo antes); solo se persiste el "hecho" en `study_completions` (incluye `skip` para saltar un día sin fingir que estudiaste).
+- **Exámenes**: configuración **por asignatura** y en **minutos, no en días** — se dice "Matemáticas unas 3 horas" y la app reparte sesiones y fases sola (no todas las asignaturas necesitan lo mismo: inglés hace listening, mates resuelve problemas, algunas no requieren práctica). Un examen puede **salirse de la pauta** con `prep_minutes_override` cuando el temazo es puntual. El plan se **calcula en tiempo de consulta** (con repaso final fijo en D-1 y asignación de los demás días justo antes); solo se persiste el "hecho" en `study_completions` (incluye `skip` para saltar un día sin fingir que estudiaste).
 - **Resumen adelantado**: en días de poca carga, Loopy puede sugerir empezar el **resumen de una asignatura** aunque no tenga examen aún ("ir adelantando"). El resumen es **progresivo por hojas** (`resumen_done_pages` vs `resumen_total_pages`): no se puede resumir entero si el tema no ha acabado, se avanza lo que se puede. Al fijarse el examen, si el resumen está completo se **omite**; si está parcial sale como *"remata el resumen (llevas X de Y hojas)"*.
 - **Vista "organiza tu tarde"**: carga en minutos + extraescolares → sugiere huecos libres para encajar las tareas.
 - **Check-in diario** (hora + días configurables): push con el tono del niño → alta rápida con **3 tipos** (deber / examen / proyecto), al guardar: **"Añadir otro"** o **"Guardar"** → listado completo del día. Android: acciones de notificación ("Añadir tareas"/"Ver mi día"); iOS: tocar abre el asistente. Si no responde, nada se pierde (asistente accesible desde la vista del día).

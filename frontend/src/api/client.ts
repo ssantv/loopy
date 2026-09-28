@@ -3,6 +3,7 @@ export interface User {
   email: string;
   profile_type: string;
   display_name: string | null;
+  course: string | null;
   timezone: string;
   notification_tone: string;
   tone_source: string;
@@ -67,6 +68,8 @@ export const api = {
   login: (payload: { email: string; password: string }) =>
     request<AuthResponse>("/api/auth/login", { method: "POST", body: JSON.stringify(payload) }),
   me: () => request<User>("/api/auth/me"),
+  updateMe: (payload: { display_name?: string | null; course?: string | null }) =>
+    request<User>("/api/auth/me", { method: "PATCH", body: JSON.stringify(payload) }),
   logout: () => request<void>("/api/auth/logout", { method: "POST" }),
   requestPasswordReset: (payload: { email: string }) =>
     request<{ detail: string }>("/api/auth/password-reset/request", { method: "POST", body: JSON.stringify(payload) }),
@@ -281,6 +284,8 @@ export interface Subject {
   id: number;
   name: string;
   color: string | null;
+  prep_minutes: number;
+  session_minutes: number;
   days_resumen: number;
   days_estudio: number;
   days_practica: number;
@@ -290,12 +295,22 @@ export interface Subject {
   resumen_done_pages: number;
 }
 
+/** Al crear, el tiempo y el reparto son opcionales: la API pone los de por defecto. */
+export type SubjectCreate = Partial<
+  Omit<Subject, "id" | "resumen_done_pages" | "prep_minutes" | "session_minutes">
+> &
+  Pick<Subject, "name"> & {
+    prep_minutes?: number;
+    session_minutes?: number;
+  };
+
 export interface Exam {
   id: number;
   subject_id: number;
   subject_name: string | null;
   exam_date: string;
   notes: string | null;
+  prep_minutes_override: number | null;
   created_at: string;
 }
 
@@ -308,16 +323,35 @@ export interface PlanItem {
   status: "done" | "skip" | null;
   done_at: string | null;
   label: string | null;
+  minutes: number;
+}
+
+/** El plan en minutos y sesiones, para poder decirlo sin jerga. */
+export interface PlanProgress {
+  session_minutes: number;
+  prep_minutes: number;
+  total_sessions: number;
+  total_minutes: number;
+  done_sessions: number;
+  pending_sessions: number;
+  pending_minutes: number;
 }
 
 export interface ExamPlan {
   exam: Exam;
-  subject: { id: number; name: string; color: string | null };
+  subject: {
+    id: number;
+    name: string;
+    color: string | null;
+    prep_minutes: number;
+    session_minutes: number;
+  };
   items: PlanItem[];
   resumen_done_pages: number;
   resumen_total_pages: number | null;
   resumen_omitted: boolean;
   resumen_partial: boolean;
+  progress: PlanProgress;
 }
 
 export interface Extracurricular {
@@ -342,10 +376,11 @@ export interface WorkSession {
 
 export const subjectApi = {
   list: () => request<Subject[]>("/api/subjects"),
-  create: (payload: Omit<Subject, "id" | "resumen_done_pages">) =>
+  create: (payload: SubjectCreate) =>
     request<Subject>("/api/subjects", { method: "POST", body: JSON.stringify(payload) }),
   update: (id: number, payload: Partial<Subject>) =>
     request<Subject>(`/api/subjects/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  remove: (id: number) => request<void>(`/api/subjects/${id}`, { method: "DELETE" }),
   advanceResumen: (id: number, date?: string) =>
     request<PlanItem>(`/api/subjects/${id}/resumen/advance`, {
       method: "POST",
@@ -363,7 +398,7 @@ export const subjectApi = {
 
 export const examApi = {
   list: () => request<Exam[]>("/api/exams"),
-  create: (payload: { subject_id: number; exam_date: string; notes?: string | null }) =>
+  create: (payload: { subject_id: number; exam_date: string; notes?: string | null; prep_minutes_override?: number | null }) =>
     request<Exam>("/api/exams", { method: "POST", body: JSON.stringify(payload) }),
   update: (id: number, payload: Partial<Exam>) =>
     request<Exam>(`/api/exams/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),

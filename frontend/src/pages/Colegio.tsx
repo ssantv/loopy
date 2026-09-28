@@ -140,7 +140,9 @@ function PhaseFields({
           sx={{ width: 200 }}
         />
         <Typography variant="caption" color="text.secondary">
-          Días antes del examen por fase; Práctica a 0 si la asignatura no la necesita.
+          Cómo se reparte el tiempo entre fases (1,1,1,1 = a partes iguales;
+          Práctica a 0 si la asignatura no la necesita). El tiempo total se
+          configura en Perfil.
         </Typography>
       </Stack>
     </Box>

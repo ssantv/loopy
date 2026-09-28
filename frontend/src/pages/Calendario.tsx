@@ -102,13 +102,15 @@ export default function Calendario() {
 
   // Poblar subjects solo si hay exámenes (diálogo adelantar)
   const planSubjects = useMemo(() => {
-    const seen = new Map<number, string>();
+    const seen = new Map<number, { name: string; color: string | null }>();
     for (const day of Object.values(data?.days ?? {})) {
       for (const p of day.plan) {
-        if (p.subject_id != null && !seen.has(p.subject_id)) seen.set(p.subject_id, p.subject_name ?? "");
+        if (p.subject_id != null && !seen.has(p.subject_id)) {
+          seen.set(p.subject_id, { name: p.subject_name ?? "", color: p.subject_color });
+        }
       }
     }
-    return [...seen.entries()].map(([id, name]) => ({ id, name }));
+    return [...seen.entries()].map(([id, v]) => ({ id, name: v.name, color: v.color }));
   }, [data]);
 
   const load = useCallback(async () => {
@@ -267,6 +269,8 @@ export default function Calendario() {
             />
           )
         ) : null}
+
+        {mode === "mes" && data && <Leyenda subjects={planSubjects} />}
       </Box>
 
       <SessionDialog
@@ -420,6 +424,33 @@ function DayCell({
   );
 }
 
+/** Leyenda de la vista mes: qué color es cada asignatura y cada tipo de tarea. */
+function Leyenda({ subjects }: { subjects: { id: number; name: string; color: string | null }[] }) {
+  if (subjects.length === 0) return null;
+  return (
+    <Stack spacing={0.5} sx={{ mt: 2, pt: 1.5, borderTop: 1, borderColor: "divider" }}>
+      <Typography variant="caption" color="text.secondary">
+        Asignaturas
+      </Typography>
+      <Stack direction="row" spacing={1.5} sx={{ flexWrap: "wrap" }}>
+        {subjects.map((s) => (
+          <Stack key={s.id} direction="row" spacing={0.5} alignItems="center">
+            <Box
+              sx={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                bgcolor: s.color ?? PHASE_COLOR.resumen,
+              }}
+            />
+            <Typography variant="caption">{s.name}</Typography>
+          </Stack>
+        ))}
+      </Stack>
+    </Stack>
+  );
+}
+
 /** Cuantos indicadores caben en una celda de mes sin que se partan en dos lineas. */
 const MAX_DOTS = 4;
 
@@ -442,16 +473,27 @@ function MonthCell({
   onAddSession: (dateISO: string) => void;
 }) {
   const isToday = dayISO === today;
+  // El punto se pinta con el color de la ASIGNATURA, no con el de la fase: es lo
+  // unico que permite saber de un vistazo que toca. Si la asignatura no tiene
+  // color propio, se cae al color de la fase. La API ya manda subject_color.
   const items = [
-    ...day.plan.map((p) => ({ color: p.status === "done" ? "#bdbdbd" : (PHASE_COLOR[p.phase] ?? "#757575"), done: p.status === "done" })),
+    ...day.plan.map((p) => ({
+      color: p.subject_color || PHASE_COLOR[p.phase] || "#757575",
+      done: p.status === "done",
+    })),
     ...day.tasks.map((t) => ({ color: CATEGORY_COLOR[t.category] ?? "#757575", done: t.done })),
   ];
   const shown = items.slice(0, MAX_DOTS);
   const rest = items.length - shown.length;
+  const detalle = [
+    ...day.plan.map((p) => `${p.subject_name ?? "Estudio"} · ${PHASE_LABEL[p.phase] ?? p.phase}`),
+    ...day.tasks.map((t) => t.title),
+  ].join("\n");
 
   return (
     <Box
       data-date={dayISO}
+      title={detalle}
       onClick={() => onOpenDay(dayISO)}
       sx={{
         height: 62,

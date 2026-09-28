@@ -14,6 +14,18 @@ Pensada para pantallas pequeñas y para quien tiene dificultades de organizació
 - Las páginas de un área (**Menú/Compra/Resumen**, **Check-in**) van en una subnavegación dentro del área, no en la barra.
 - **"Salir"** está en el menú de usuario de la cabecera, para no competir con la navegación.
 - Todo lo accionable está en la principal: qué toca hoy, atrasadas, adelantadas, deberes con cuenta atrás, próximos exámenes y el calendario.
+- En el área de **Colegio**, la subnavegación incluye **Perfil**, que es donde se configura el curso del niño y sus asignaturas.
+
+## Perfil del niño
+
+Todo lo que el planificador necesita saber del niño está en **Colegio → Perfil**, en un solo sitio:
+
+- **Curso** ("5º de Primaria"), para tener el contexto a la vista.
+- **Asignaturas**, cada una con su **color**. Ese color es el que identifica la asignatura en el calendario, así que es la "forma de marcar" los planes: el punto de cada día lleva el color de su asignatura, y una **leyenda** al pie del mes traduce color → asignatura.
+- **Tiempo por asignatura**, en **minutos**: "Matemáticas unas 3 horas". Es el único dato que se configura; el número de sesiones y el reparto entre fases (resumen / estudio / práctica / repaso) los calcula la app a partir de ahí.
+- **Excepciones por examen**: si un examen concreto se sale de la pauta (un temazo puntual), se le puede dar su propio tiempo sin tocar el resto de la asignatura. Se borra volviendo al valor general.
+
+> Nota: el campo de peso por fase (`1,1,1,1` por defecto) reparte las sesiones entre fases, y un `0` descarta esa fase — así es como se quita la práctica en una asignatura que no la tiene.
 
 ## Stack
 

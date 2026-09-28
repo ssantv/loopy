@@ -10,6 +10,7 @@ import ResetPassword from "./pages/ResetPassword";
 import Home from "./pages/Home";
 import Colegio from "./pages/Colegio";
 import CheckIn from "./pages/CheckIn";
+import Perfil from "./pages/Perfil";
 import Casa from "./pages/Casa";
 import Compra from "./pages/Compra";
 import Resumen from "./pages/Resumen";
@@ -61,7 +62,8 @@ export default function App() {
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/" element={<Protected>{<Home />}</Protected>} />
       <Route path="/colegio" element={<ChildOnly>{<Colegio />}</ChildOnly>} />
-      <Route path="/checkin" element={<ChildOnly>{<CheckIn />}</ChildOnly>} />
+        <Route path="/checkin" element={<ChildOnly>{<CheckIn />}</ChildOnly>} />
+        <Route path="/perfil" element={<ChildOnly>{<Perfil />}</ChildOnly>} />
       <Route path="/casa" element={<AdultOnly>{<Casa />}</AdultOnly>} />
       <Route path="/compra" element={<AdultOnly>{<Compra />}</AdultOnly>} />
       <Route path="/resumen" element={<AdultOnly>{<Resumen />}</AdultOnly>} />
