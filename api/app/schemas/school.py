@@ -123,6 +123,84 @@ class ExtracurricularOut(BaseModel):
     end_on: date | None
 
 
+# ------------------------------------------------------- horario y días sin cole
+
+
+class TimetableSlotCreate(BaseModel):
+    """Una asignatura en un día de la semana. Sin horas: solo importa el día.
+
+    `day_of_week`: 0 = lunes .. 6 = domingo.
+    """
+
+    subject_id: int
+    day_of_week: int = Field(ge=0, le=6)
+
+
+class TimetableSlotOut(BaseModel):
+    id: int
+    subject_id: int
+    subject_name: str | None = None
+    subject_color: str | None = None
+    day_of_week: int
+
+
+class TimetableOut(BaseModel):
+    """Horario agrupado por día, listo para pintar en el frontend."""
+
+    days: dict[int, list[TimetableSlotOut]] = Field(default_factory=dict)
+
+
+class OffDayCreate(BaseModel):
+    """Rango de días sin cole. Un día suelto es `start_on == end_on`."""
+
+    start_on: date
+    end_on: date | None = None
+    label: str | None = Field(default=None, max_length=80)
+
+    @model_validator(mode="after")
+    def _validate_range(self) -> "OffDayCreate":
+        end = self.end_on or self.start_on
+        if end < self.start_on:
+            raise ValueError("'end_on' no puede ser anterior a 'start_on'")
+        self.end_on = end
+        return self
+
+
+class OffDayOut(BaseModel):
+    id: int
+    start_on: date
+    end_on: date
+    label: str | None
+    days_count: int = Field(description="Cuántos días abarca el rango, ambos incluidos")
+
+
+# ------------------------------------------------------------ plantillas de deber
+
+
+class HomeworkTemplateCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    subject_id: int | None = None
+    est_minutes: int | None = Field(default=None, ge=1, le=100000)
+    sort: int = 0
+
+
+class HomeworkTemplateUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    subject_id: int | None = None
+    est_minutes: int | None = Field(default=None, ge=1, le=100000)
+    sort: int | None = None
+
+
+class HomeworkTemplateOut(BaseModel):
+    id: int
+    title: str
+    subject_id: int | None
+    subject_name: str | None = None
+    est_minutes: int | None
+    sort: int
+    created_at: datetime
+
+
 class WorkSessionCreate(BaseModel):
     kind: str = Field(pattern="^(homework|study|project)$")
     task_id: int | None = None
@@ -178,11 +256,19 @@ class QuickAddItem(BaseModel):
     pending_from_class: bool = False
     due_on: date | None = None
     notes: str | None = None
+    # Si el deber viene de una extraescolar, su fecha límite es el próximo día
+    # de esa extraescolar, no el próximo día de clase de la asignatura.
+    extracurricular_id: int | None = None
+    # Aplica una plantilla guardada: rellena título/asignatura/minutos de una vez.
+    template_id: int | None = None
+    # Anula el `day` del request para este item (permite encargar "para el lunes"
+    # varios deberes distintos el mismo día).
+    assigned_on: date | None = None
 
     @model_validator(mode="after")
     def _validate_per_type(self) -> "QuickAddItem":
-        if self.type in ("deber", "proyecto") and not self.title:
-            raise ValueError(f"El tipo '{self.type}' necesita un título")
+        if self.type in ("deber", "proyecto") and not self.title and not self.template_id:
+            raise ValueError(f"El tipo '{self.type}' necesita un título o una plantilla")
         if self.type == "examen":
             if self.subject_id is None:
                 raise ValueError("El examen necesita una asignatura")
@@ -190,11 +276,13 @@ class QuickAddItem(BaseModel):
                 raise ValueError("El examen necesita fecha")
             if self.title:
                 raise ValueError("El examen no lleva título (se usa el de la asignatura)")
+        if self.type == "examen" and (self.template_id or self.extracurricular_id):
+            raise ValueError("El examen no admite plantilla ni extraescolar")
         return self
 
 
 class QuickAddRequest(BaseModel):
-    day: date | None = Field(default=None, description="Día de los deberes; por defecto hoy")
+    day: date | None = Field(default=None, description="Día en que se encarga; por defecto hoy")
     items: list[QuickAddItem] = Field(min_length=1, max_length=30)
 
 
@@ -206,6 +294,11 @@ class QuickAddDeberOut(BaseModel):
     due_on: date | None
     est_minutes: int | None
     pending_from_class: bool
+    # Día en que se encargó, y de dónde vino el deber (asignatura u extraescolar).
+    assigned_on: date | None = None
+    source_kind: str | None = None  # asignatura | extraescolar | None (sin origen)
+    source_name: str | None = None
+    due_from_rule: str | None = None  # "próximo día de clase" | "próxima extraescolar" | "manual"
 
 
 class QuickAddProyectoOut(BaseModel):
@@ -215,6 +308,10 @@ class QuickAddProyectoOut(BaseModel):
     subject_id: int | None
     due_on: date | None
     est_minutes: int | None
+    assigned_on: date | None = None
+    source_kind: str | None = None
+    source_name: str | None = None
+    due_from_rule: str | None = None
 
 
 class QuickAddExamenOut(BaseModel):
@@ -259,9 +356,24 @@ class CalendarPlanOut(BaseModel):
     session: bool = False  # True si es sesión adelantada (no viene del plan)
 
 
+class CalendarExtraOut(BaseModel):
+    """Extraescolar que cae ese día, ya resuelto a horas concretas."""
+
+    id: int
+    name: str
+    start_time: time
+    end_time: time
+
+
 class CalendarDayOut(BaseModel):
     tasks: list[CalendarTaskOut] = []
     plan: list[CalendarPlanOut] = []
+    # True si el día está marcado como sin cole (vacaciones, puente...).
+    no_school: bool = False
+    # Etiqueta del rango sin cole que cubre este día, si lo hay ("Navidad").
+    off_label: str | None = None
+    # Extraescolares de ese día concreto.
+    extras: list[CalendarExtraOut] = []
 
 
 class CalendarOut(BaseModel):

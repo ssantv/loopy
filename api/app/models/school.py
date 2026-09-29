@@ -73,6 +73,63 @@ class Extracurricular(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class ScheduleSlot(Base):
+    """Un día en el que el niño tiene una asignatura: el horario escolar.
+
+    No guarda horas, solo qué días toca cada asignatura, porque eso es lo que
+    hace falta para calcular la fecha límite de un deber ("el próximo día que
+    tengo esta asignatura"). `day_of_week` usa la convención del resto del
+    proyecto: 0 = lunes .. 6 = domingo (igual que `date.weekday()`).
+    """
+
+    __tablename__ = "schedule_slots"
+    __table_args__ = (UniqueConstraint("user_id", "subject_id", "day_of_week", name="uq_schedule_slot"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id", ondelete="CASCADE"), index=True, nullable=False)
+    day_of_week: Mapped[int] = mapped_column(SmallInteger, nullable=False)  # 0 lun .. 6 dom
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class OffDay(Base):
+    """Rango de días sin cole: vacaciones, puentes, semana de exams...
+
+    Se guarda como intervalo `start_on..end_on` porque casi siempre son varios
+    días seguidos; un día suelto es simplemente `start_on == end_on`. Los rangos
+    se pueden solapar: a la hora de consultarlos solo importa la unión.
+    """
+
+    __tablename__ = "off_days"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    start_on: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    end_on: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    # "Vacaciones de Navidad", "Puente del Pilar"...
+    label: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class HomeworkTemplate(Base):
+    """Deber frecuente guardado como atajo ("Ficha de mates", "Leer 20 min").
+
+    Es solo una sugerencia para el alta rápida: al aplicarla, el frontend la
+    manda a `/api/checkin/items` como cualquier otro deber, así que la
+    plantilla no ata a nada del motor de tareas.
+    """
+
+    __tablename__ = "homework_templates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    subject_id: Mapped[int | None] = mapped_column(ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True)
+    est_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sort: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class CheckinConfig(Base):
     """Configuración del check-in diario del niño (hora + días de la semana).
 

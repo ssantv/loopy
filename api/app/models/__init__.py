@@ -10,7 +10,16 @@ from app.models.menu import (
     RecipeIngredient,
 )
 from app.models.notify import NotificationOutbox, PushSubscription
-from app.models.school import CheckinConfig, Exam, Extracurricular, StudyCompletion, WorkSession
+from app.models.school import (
+    CheckinConfig,
+    Exam,
+    Extracurricular,
+    HomeworkTemplate,
+    OffDay,
+    ScheduleSlot,
+    StudyCompletion,
+    WorkSession,
+)
 from app.models.task import Room, RotationGroup, Subject, Task, TaskCompletion
 from app.models.user import PasswordResetToken, Session, User
 
@@ -26,6 +35,9 @@ __all__ = [
     "Exam",
     "StudyCompletion",
     "Extracurricular",
+    "ScheduleSlot",
+    "OffDay",
+    "HomeworkTemplate",
     "WorkSession",
     "CheckinConfig",
     "ShoppingItem",

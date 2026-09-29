@@ -46,6 +46,7 @@ class UserOut(BaseModel):
     notification_tone: str
     tone_source: str
     parent_id: int | None = None
+    study_max_minutes: int = 60
     age: int | None
     created_at: datetime
 
@@ -55,6 +56,8 @@ class ProfileUpdate(BaseModel):
 
     display_name: str | None = Field(default=None, max_length=80)
     course: str | None = Field(default=None, max_length=80)
+    # Tope de minutos de estudio al día. 0 = sin tope (reparto libre).
+    study_max_minutes: int | None = Field(default=None, ge=0, le=100000)
 
 
 class AuthResponse(BaseModel):

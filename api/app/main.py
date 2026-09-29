@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import adult, auth, child, extras, menu, pending, push, school, tasks
+from app.routers import adult, auth, child, extras, menu, pending, push, schedule, school, tasks
 from app.services.notify import notify_loop
 
 
@@ -40,6 +40,7 @@ app.include_router(tasks.router)
 app.include_router(school.router)
 app.include_router(child.router)
 app.include_router(extras.router)
+app.include_router(schedule.router)
 app.include_router(adult.router)
 app.include_router(push.router)
 app.include_router(pending.router)

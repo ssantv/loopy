@@ -319,6 +319,7 @@ def user_out_dict(user: User) -> dict:
         "notification_tone": user.notification_tone,
         "tone_source": user.tone_source,
         "parent_id": user.parent_id,
+        "study_max_minutes": user.study_max_minutes,
         "age": user.age(),
         "created_at": user.created_at,
     }

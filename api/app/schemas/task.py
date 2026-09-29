@@ -6,15 +6,20 @@ from pydantic import BaseModel, Field
 
 
 class TaskCreate(BaseModel):
-    category: str = Field(pattern="^(general|hogar|colegio-deberes|colegio-trabajo|puntual)$")
+    category: str = Field(pattern="^(general|hogar|rutina|colegio-deberes|colegio-trabajo|puntual)$")
     title: str = Field(min_length=1, max_length=200)
     notes: str | None = None
 
     room_id: int | None = None
     subject_id: int | None = None
+    extracurricular_id: int | None = None
 
     due_on: date | None = None
     due_at: datetime | None = None
+    assigned_on: date | None = None
+    # `created_by` NO se acepta aquí a propósito: lo pone el servidor cuando un
+    # adulto asigna un encargo. Si el cliente pudiera elegirlo, un niño podría
+    # fingir que el deber se lo mandó su madre.
     notify: bool = False
 
     rec_type: str | None = Field(default=None, pattern="^(daily|weekly_days|month_day|interval|rotation_ref)$")
@@ -38,6 +43,7 @@ class TaskUpdate(BaseModel):
     notes: str | None = None
     due_on: date | None = None
     due_at: datetime | None = None
+    assigned_on: date | None = None
     notify: bool | None = None
     est_minutes: int | None = Field(default=None, ge=1)
     sort: int | None = None
@@ -51,8 +57,11 @@ class TaskOut(BaseModel):
     notes: str | None
     room_id: int | None
     subject_id: int | None
+    extracurricular_id: int | None
     due_on: date | None
     due_at: datetime | None
+    assigned_on: date | None
+    created_by: int | None
     notify: bool
     rec_type: str | None
     rec_interval: int

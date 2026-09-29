@@ -45,6 +45,10 @@ class User(Base):
     notification_tone: Mapped[str] = mapped_column(String(24), nullable=False, default="cercano")
     tone_source: Mapped[str] = mapped_column(String(8), nullable=False, default="auto")
     birth_date: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Tope de minutos de estudio al día. Con varios exámenes seguidos, el reparto
+    # hacia atrás puede amontonar 3 horas en un día; este tope empuja el exceso a
+    # días anteriores. 0 = sin tope.
+    study_max_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60, server_default="60")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)

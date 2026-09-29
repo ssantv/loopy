@@ -79,16 +79,28 @@ class Task(Base):
 
     category: Mapped[str] = mapped_column(
         String(24), nullable=False, index=True
-    )  # general | hogar | colegio-deberes | colegio-trabajo | puntual
+    )  # general | hogar | rutina | colegio-deberes | colegio-trabajo | puntual
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     room_id: Mapped[int | None] = mapped_column(ForeignKey("rooms.id", ondelete="SET NULL"), nullable=True)
     subject_id: Mapped[int | None] = mapped_column(ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True)
+    # De dónde viene el deber cuando lo manda una extraescolar y no una asignatura.
+    extracurricular_id: Mapped[int | None] = mapped_column(
+        ForeignKey("extracurriculars.id", ondelete="SET NULL"), nullable=True
+    )
 
     # Un día concreto (puntual o "para hoy") o fecha objetivo.
     due_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Día en que se ENCARGA. Distinto de `due_on` (fecha límite): un deber de
+    # sociales repartido los lunes y martes, encargado un martes, no es para
+    # mañana sino para el siguiente lunes que haya clase. `due_on` se queda
+    # fijo en esa fecha aunque el plazo pase, y el deber sigue pendiente.
+    assigned_on: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    # Quién la creó. Lo rellena el adulto cuando le asigna un encargo al niño,
+    # para poder listar y cancelar lo que le ha mandado.
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     notify: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     # --- Recurrencia ---

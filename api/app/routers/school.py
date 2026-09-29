@@ -7,11 +7,12 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
-from app.models import Exam, StudyCompletion, Subject, Task, TaskCompletion
+from app.models import Exam, OffDay, StudyCompletion, Subject, Task, TaskCompletion
 from app.models.user import User
 from app.routers.auth import get_current_user
 from app.schemas.school import (
     CalendarDayOut,
+    CalendarExtraOut,
     CalendarOut,
     CalendarPlanOut,
     CalendarTaskOut,
@@ -26,6 +27,7 @@ from app.schemas.school import (
 )
 from app.services.engine import as_rules, scheduled_dates_between
 from app.services.planner import ExamPlanCfg, plan_progress, plan_span, resumen_complete
+from app.services.schedule import load_school_calendar
 
 router = APIRouter(prefix="/api", tags=["colegio"])
 
@@ -417,11 +419,16 @@ async def calendar(
       (calendario por recurrencia); las hechas ese día exacto se marcan `done`.
     - Plan: items del plan de los exámenes del usuario en el rango + sesiones
       adelantadas sin examen.
+    - Días sin cole: se marcan con `no_school` + `off_label` aunque no haya nada
+      más ese día, para que el frontend pueda pintar las vacaciones.
+    - Extraescolares: las de cada día, ya resueltas a horas concretas.
     """
     start = min(from_date, to)
     end = max(from_date, to)
     if end - start > timedelta(days=370):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Rango demasiado grande")
+
+    cal = await load_school_calendar(db, user.id)
 
     tasks = (
         await db.execute(
@@ -521,5 +528,31 @@ async def calendar(
                 session=True,
             )
         )
+
+    # Días sin cole y extraescolares. Solo se añaden al dict los días que
+    # aportan algo: la respuesta sigue siendo dispersa (un año vacío sigue
+    # siendo `{}`) pero las vacaciones y las extraescolares ya salen, sin que
+    # el frontend tenga que descargarse 365 entradas vacías.
+    off_rows = (
+        await db.execute(
+            select(OffDay).where(OffDay.user_id == user.id, OffDay.end_on >= start, OffDay.start_on <= end)
+        )
+    ).scalars().all()
+    day = start
+    while day <= end:
+        is_off = cal.is_off_day(day)
+        extras_today = cal.extras_on(day)
+        if is_off or extras_today:
+            entry = days.setdefault(day.isoformat(), CalendarDayOut())
+            if is_off:
+                entry.no_school = True
+                # Con rangos solapados gana el primero que empieza antes: es el
+                # más probable que describa el periodo entero.
+                entry.off_label = next((o.label for o in off_rows if o.start_on <= day <= o.end_on and o.label), None)
+            for extra in extras_today:
+                entry.extras.append(
+                    CalendarExtraOut(id=extra.id, name=extra.name, start_time=extra.start_time, end_time=extra.end_time)
+                )
+        day += timedelta(days=1)
 
     return CalendarOut(from_date=start, to=end, days=days)
