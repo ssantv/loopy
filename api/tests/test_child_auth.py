@@ -154,6 +154,54 @@ async def test_crear_nino_requiere_autenticacion(env):
     assert r.status_code == 401
 
 
+# --------------------------------------------------------------------------
+# Listar las cuentas de niño del adulto
+# --------------------------------------------------------------------------
+
+
+async def test_el_adulto_ve_sus_ninos_y_solo_los_suyos(env):
+    token_adulto = await _registrar_adulto(env)
+    r1 = await _crear_nino(env, token_adulto, nombre="Lucía", pin="4821", course="4º de Primaria")
+    r2 = await _crear_nino(env, token_adulto, nombre="Nico", pin="1234")
+    assert r1.status_code == 201, r1.text
+    assert r2.status_code == 201, r2.text
+
+    r = await env.client.get("/api/auth/children", headers={"Authorization": f"Bearer {token_adulto}"})
+    assert r.status_code == 200, r.text
+    ninos = r.json()
+    assert [n["display_name"] for n in ninos] == ["Lucía", "Nico"]  # en orden de creación
+    assert ninos[0]["course"] == "4º de Primaria"
+    # La lista es para saber a quién se le dio un PIN, no para filtrar datos:
+    # ni el hash del PIN ni nada de su actividad salen aquí.
+    assert "pin_hash" not in ninos[0]
+
+    # Otro adulto no ve a estos niños: la lista se filtra por `parent_id`.
+    otro = await env.client.post(
+        "/api/auth/register",
+        json={"email": "otro@test.com", "password": PASSWORD, "profile_type": "adult", "display_name": "Papá"},
+    )
+    token_otro = otro.json()["token"]
+    r_otro = await env.client.get("/api/auth/children", headers={"Authorization": f"Bearer {token_otro}"})
+    assert r_otro.status_code == 200
+    assert r_otro.json() == []
+
+
+async def test_un_nino_no_puede_listar_los_ninos_de_su_madre(env):
+    """Un menor no gana nada viendo la lista, y menos la de sus hermanos."""
+    token_adulto = await _registrar_adulto(env)
+    assert (await _crear_nino(env, token_adulto, nombre="Hija", pin="5555")).status_code == 201
+    login = await env.client.post("/api/auth/child-login", json={"display_name": "Hija", "pin": "5555"})
+    assert login.status_code == 200, login.text
+
+    r = await env.client.get("/api/auth/children", headers={"Authorization": f"Bearer {login.json()['token']}"})
+    assert r.status_code == 403
+    assert "adulto" in r.json()["detail"].lower()
+
+
+async def test_listar_ninos_requiere_autenticacion(env):
+    assert (await env.client.get("/api/auth/children")).status_code == 401
+
+
 async def test_pin_muy_corto_rechazado_por_validacion(env):
     token = await _registrar_adulto(env)
     r = await env.client.post(

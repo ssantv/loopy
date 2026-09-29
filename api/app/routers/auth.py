@@ -139,6 +139,27 @@ async def create_child(
     return UserOut(**user_out_dict(child))
 
 
+@router.get("/children", response_model=list[UserOut])
+async def list_children(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> list[UserOut]:
+    """Cuentas de niño que ha creado esta cuenta adulta.
+
+    Solo el adulto ve esta lista. El niño es dueño de su propio módulo y no
+    necesita saber de quién es, así que no se le expone nada de esto.
+    """
+    if user.profile_type != "adult":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Solo el perfil adulto puede ver las cuentas de niño"
+        )
+    children = (
+        (await db.execute(select(User).where(User.parent_id == user.id).order_by(User.created_at, User.id)))
+        .scalars()
+        .all()
+    )
+    return [UserOut(**user_out_dict(c)) for c in children]
+
+
 @router.post("/child-login", response_model=AuthResponse)
 async def child_login(
     payload: ChildLoginRequest, request: Request, db: AsyncSession = Depends(get_db)

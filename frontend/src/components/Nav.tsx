@@ -17,6 +17,7 @@ import HomeIcon from "@mui/icons-material/Home";
 import CalendarMonthIcon from "@mui/icons-material/CalendarMonth";
 import SchoolIcon from "@mui/icons-material/School";
 import CottageIcon from "@mui/icons-material/Cottage";
+import PeopleAltOutlinedIcon from "@mui/icons-material/PeopleAltOutlined";
 import LogoutIcon from "@mui/icons-material/Logout";
 import PersonIcon from "@mui/icons-material/Person";
 
@@ -68,6 +69,7 @@ export function subItems(isChild: boolean): NavItem[] {
     { to: "/menu", label: "Menú", icon: <PersonIcon /> },
     { to: "/compra", label: "Compra", icon: <PersonIcon /> },
     { to: "/resumen", label: "Resumen", icon: <PersonIcon /> },
+    { to: "/familia", label: "Familia", icon: <PeopleAltOutlinedIcon /> },
   ];
 }
 

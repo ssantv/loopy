@@ -1,12 +1,16 @@
 export interface User {
   id: number;
-  email: string;
+  email: string | null;
   profile_type: string;
   display_name: string | null;
   course: string | null;
   timezone: string;
   notification_tone: string;
   tone_source: string;
+  /** Adulto que creó la cuenta. `null` en las cuentas antiguas y en el adulto. */
+  parent_id: number | null;
+  /** Tope de minutos de estudio al día. 0 = sin tope. */
+  study_max_minutes: number;
   age: number | null;
   created_at: string;
 }
@@ -67,6 +71,17 @@ export const api = {
   }) => request<AuthResponse>("/api/auth/register", { method: "POST", body: JSON.stringify(payload) }),
   login: (payload: { email: string; password: string }) =>
     request<AuthResponse>("/api/auth/login", { method: "POST", body: JSON.stringify(payload) }),
+  /** Entrada de los menores: nombre + PIN, sin email. */
+  childLogin: (payload: { display_name: string; pin: string }) =>
+    request<AuthResponse>("/api/auth/child-login", { method: "POST", body: JSON.stringify(payload) }),
+  /** El adulto da de alta la cuenta del niño. El PIN no se puede recuperar después. */
+  createChild: (payload: {
+    display_name: string;
+    pin: string;
+    birth_date: string;
+    course?: string | null;
+  }) => request<User>("/api/auth/children", { method: "POST", body: JSON.stringify(payload) }),
+  children: () => request<User[]>("/api/auth/children"),
   me: () => request<User>("/api/auth/me"),
   updateMe: (payload: { display_name?: string | null; course?: string | null }) =>
     request<User>("/api/auth/me", { method: "PATCH", body: JSON.stringify(payload) }),

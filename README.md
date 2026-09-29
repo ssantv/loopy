@@ -27,6 +27,17 @@ Todo lo que el planificador necesita saber del niño está en **Colegio → Perf
 
 > Nota: el campo de peso por fase (`1,1,1,1` por defecto) reparte las sesiones entre fases, y un `0` descarta esa fase — así es como se quita la práctica en una asignatura que no la tiene.
 
+## Cuentas de niño
+
+Cada menor tiene su propia cuenta, creada por un adulto desde **Casa → Familia**. **No tiene email**: entra con su nombre y un PIN de 4 o 6 cifras que elige el adulto. El PIN se guarda hasheado con Argon2id y **no se puede recuperar**, así que se enseña una sola vez, al crearlo, con el aviso de que hay que apuntarlo.
+
+Hay **dos puertas de entrada**, porque son dos personas distintas y no se mezclan: `/login` para el adulto (email y contraseña) y `/nino` para el menor (nombre y PIN).
+
+El nombre es la clave de entrada del niño, así que **no puede repetirse entre cuentas**: solo entra quien haga coincidir nombre *y* PIN, y si dos cuentas coincidieran en ambos, la entrada quedaría bloqueada por completo en lugar de adivinar. Por eso Familia avisa antes de dar de alta un nombre repetido. El nombre se compara con mayúsculas y minúsculas, como en la entrada.
+
+- El PIN está limitado a 5 intentos fallidos por `(nombre, IP)` en 5 min → `429` con `Retry-After`, igual que el login del adulto.
+- Cada cuenta de niño está aislada: todo se filtra por `user_id` y ninguna lista de un niño ve los datos de otro.
+
 ## Stack
 
 | Capa | Tecnología |

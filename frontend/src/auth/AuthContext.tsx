@@ -5,6 +5,8 @@ interface AuthContextValue {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  /** Entrada del menor con su nombre y su PIN. */
+  loginChild: (displayName: string, pin: string) => Promise<void>;
   register: (payload: {
     email: string;
     password: string;
@@ -39,6 +41,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(res.user);
   };
 
+  const loginChild = async (displayName: string, pin: string) => {
+    const res = await api.childLogin({ display_name: displayName, pin });
+    setToken(res.token);
+    setUser(res.user);
+  };
+
   const register = async (payload: {
     email: string;
     password: string;
@@ -61,7 +69,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ user, loading, login, loginChild, register, logout }}>
+      {children}
+    </AuthContext.Provider>
   );
 }
 

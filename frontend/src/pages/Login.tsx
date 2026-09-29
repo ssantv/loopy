@@ -64,6 +64,9 @@ export default function Login() {
         <Button type="submit" variant="contained" disabled={submitting}>
           {submitting ? "Entrando…" : "Entrar"}
         </Button>
+        <Button component={RouterLink} to="/nino" variant="outlined">
+          Soy un niño, entrar con mi PIN
+        </Button>
         <Typography variant="body2" align="center">
           <Link component={RouterLink} to="/olvide-password">
             ¿Has olvidado la contraseña?
