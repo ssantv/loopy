@@ -36,10 +36,18 @@ literal, que contradice el ejemplo):
       "remata el resumen (llevas X de Y hojas)".
     - `resumen_total_pages = NULL` -> el resumen no tiene "hojas"; se trata
       como trabajo largo medido por sesiones de estudio.
+    - Los días sin cole (`off_days`) no son días válidos: el plan salta las
+      vacaciones en lugar de pedir estudio un puente. Es el mismo mecanismo que
+      excluir fines de semana, con el mismo parámetro `off_days`.
+    - Con varios exámenes a la vez, cada plan por separado puede pedir 3 sesiones
+      el mismo día. `spread_daily_load` reparte esa carga para respetar un tope
+      diario (`study_max_minutes`), moviendo antes lo que sobra y respetando
+      siempre que el repaso-final está pegado al examen.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -149,23 +157,33 @@ def resumen_complete(cfg: ExamPlanCfg, done_pages: int) -> bool:
     return cfg.resumen_total_pages is not None and done_pages >= cfg.resumen_total_pages
 
 
-def is_valid_day(day: date, include_weekends: bool) -> bool:
-    """Un día es válido para el plan (los fines de semana se excluyen si se pide)."""
+def is_valid_day(day: date, include_weekends: bool, off_days: Collection[date] | None = None) -> bool:
+    """Un día es válido para el plan.
+
+    Se excluye si:
+    - no se incluyen fines de semana y es sábado/domingo, o
+    - el día está marcado como sin cole (vacaciones, puente).
+    """
+    if off_days is not None and day in off_days:
+        return False
     return include_weekends or day.weekday() < 5
 
 
-def _valid_offsets(exam_date: date, cfg: ExamPlanCfg) -> dict[date, int]:
+def _valid_offsets(
+    exam_date: date, cfg: ExamPlanCfg, off_days: Collection[date] | None = None
+) -> dict[date, int]:
     """Offset X para cada día válido en [D-total, D-1], caminando hacia atrás.
 
     X=1 es el día anterior al examen (D−1, o el último día válido antes de
-    D cuando se excluyen fines de semana). Se genera solo `total` días.
+    D cuando se excluyen fines de semana o cae en días sin cole). Se genera
+    solo `total` días.
     """
     total = cfg.days_resumen + cfg.days_estudio + cfg.days_practica + cfg.days_repaso
     offsets: dict[date, int] = {}
     x = 0
     d = exam_date - timedelta(days=1)
     while x < total and d < exam_date:
-        if is_valid_day(d, cfg.include_weekends):
+        if is_valid_day(d, cfg.include_weekends, off_days):
             x += 1
             offsets[d] = x
         d -= timedelta(days=1)
@@ -177,11 +195,12 @@ def plan_day(
     cfg: ExamPlanCfg,
     day: date,
     resumen_done_pages: int = 0,
+    off_days: Collection[date] | None = None,
 ) -> PlanItem | None:
     """Fase del plan para un día concreto (None si ese día no toca plan)."""
-    if day >= exam_date or not is_valid_day(day, cfg.include_weekends):
+    if day >= exam_date or not is_valid_day(day, cfg.include_weekends, off_days):
         return None
-    x = _valid_offsets(exam_date, cfg).get(day)
+    x = _valid_offsets(exam_date, cfg, off_days).get(day)
     if x is None:
         return None
 
@@ -209,6 +228,7 @@ def plan_span(
     start: date | None = None,
     end: date | None = None,
     resumen_done_pages: int = 0,
+    off_days: Collection[date] | None = None,
 ) -> list[PlanItem]:
     """Todos los ítems del plan entre `start` y `end` (ambos inclusive)."""
     end = end or (exam_date - timedelta(days=1))
@@ -216,7 +236,7 @@ def plan_span(
     items = []
     d = max(start, exam_date - timedelta(days=400))
     while d <= end:
-        item = plan_day(exam_date, cfg, d, resumen_done_pages)
+        item = plan_day(exam_date, cfg, d, resumen_done_pages, off_days)
         if item is not None:
             items.append(item)
         d += timedelta(days=1)
@@ -229,6 +249,7 @@ def plan_progress(
     done_dates: set[date] | None = None,
     today: date | None = None,
     resumen_done_pages: int = 0,
+    off_days: Collection[date] | None = None,
 ) -> dict:
     """Cómo va el plan en minutos y sesiones, para poder decirlo en la interfaz.
 
@@ -239,8 +260,8 @@ def plan_progress(
     done_dates = done_dates or set()
     today = today or date.today()
     # Plan completo (no solo desde hoy): si no, los días que ya quedaron atrás se
-    # contarían como neither hechos ni pendientes.
-    items = plan_span(exam_date, cfg, resumen_done_pages=resumen_done_pages)
+    # contarían como ni hechos ni pendientes.
+    items = plan_span(exam_date, cfg, resumen_done_pages=resumen_done_pages, off_days=off_days)
 
     done = [i for i in items if i.date in done_dates]
     pending = [i for i in items if i.date >= today and i.date not in done_dates]
@@ -254,3 +275,136 @@ def plan_progress(
         "pending_sessions": len(pending),
         "pending_minutes": sum(i.minutes for i in pending),
     }
+
+
+# ------------------------------------------------------ reparto de carga diaria
+
+
+@dataclass(frozen=True)
+class StudyTask:
+    """Un ítem del plan junto al examen al que pertenece.
+
+    Hace falta el contexto del examen para poder repartir carga entre varios
+    planes: un `PlanItem` suelto no sabe de qué examen es ni cuánto le urge.
+    `exam_id` está para que quien lo pinte (el calendario) pueda volver al
+    examen y sacar su nombre y su color sin tener que adivinarlo por fecha.
+    """
+
+    exam_date: date
+    subject_id: int
+    item: PlanItem
+    exam_id: int | None = None
+
+    @property
+    def phase(self) -> str:
+        return self.item.phase
+
+    @property
+    def minutes(self) -> int:
+        return self.item.minutes
+
+    @property
+    def date(self) -> date:
+        return self.item.date
+
+
+# Orden de urgencia: primero lo que pertenece al examen más próximo; dentro de
+# un examen, primero lo que está más cerca del examen (offset mayor = repaso-final).
+_URGENCY = {phase: rank for rank, phase in enumerate(("repaso-final", "repaso", "practica", "estudio", "resumen"))}
+
+
+def spread_daily_load(
+    tasks: Iterable[StudyTask],
+    *,
+    daily_max_minutes: int,
+    is_valid: Callable[[date], bool] | None = None,
+    max_back_days: int = 60,
+    busy: dict[date, int] | None = None,
+) -> tuple[dict[date, list[StudyTask]], list[StudyTask]]:
+    """Reparte sesiones de estudio para que ningún día pase de `daily_max_minutes`.
+
+    El problema: cada examen se planifica por separado, así que con tres
+    exámenes la misma semana salen tres sesiones de 30 min en el mismo día
+    (90 min de golpe, que a un niño de 8 años no le sirve de nada). El tope
+    diario es lo que evita ese día imposible.
+
+    Cómo lo resuelve, en dos pasos y de forma determinista:
+
+    1. Se colocan primero las tareas **más urgentes**, que se quedan donde
+       estaban. Así el repaso-final sigue pegado al examen, que es la fase que
+       no se puede mover.
+    2. Cada tarea que se pasa del topping se busca **hacia atrás** el primer
+       día válido con hueco.
+
+    Se mueve trabajo hacia atrás, nunca hacia adelante: Adelantar estudio que
+    toca mañana no es un fallo, retrasarlo sí. Al mover hacia atrás solo
+    empeora el día siguiente, que ya está lleno por definición, así que empuja
+    la carga hacia el pasado, que es donde hay sitio.
+
+    Si aun así no cabe en `max_back_days` días, la tarea se devuelve en el
+    segundo elemento del resultado en vez de desaparecer en silencio: es mejor
+    poder decir "esto no cabe" que fingir que el plan está completo.
+
+    `daily_max_minutes <= 0` significa **sin tope**: es el valor que se guarda
+    cuando alguien decide no querer un límite, y tratar ese 0 como "cabe 0
+    minutos" movería todo el estudio al pasado sin que nadie lo hubiera pedido.
+
+    `busy` son minutos ya comprometidos en cada día que el llamante no quiere
+    que se toquen (por ejemplo, sesiones ya completadas, que están ancladas a su
+    día porque el "hecho" se guardó con esa fecha). Cuentan como ocupados pero no
+    se mueven: si se movieran, el plan dejaría de coincidir con lo que el niño
+    ya hizo.
+    """
+    is_valid = is_valid or (lambda _d: True)
+    cap = daily_max_minutes if daily_max_minutes > 0 else None
+    pending = sorted(
+        tasks,
+        key=lambda t: (t.exam_date, -t.item.offset, _URGENCY.get(t.phase, 99)),
+    )
+
+    by_day: dict[date, list[StudyTask]] = {}
+    used: dict[date, int] = dict(busy or {})
+    unplaced: list[StudyTask] = []
+
+    for task in pending:
+        target = task.date
+        if cap is None or (is_valid(target) and used.get(target, 0) + task.minutes <= cap):
+            pass
+        else:
+            found = _find_slot(
+                task.date,
+                is_valid=is_valid,
+                used=used,
+                minutes=task.minutes,
+                cap=cap,
+                max_back_days=max_back_days,
+            )
+            if found is None:
+                unplaced.append(task)
+                continue
+            target = found
+        by_day.setdefault(target, []).append(task)
+        used[target] = used.get(target, 0) + task.minutes
+
+    # Orden estable dentro de cada día: primero lo del examen más próximo.
+    for day in by_day:
+        by_day[day].sort(key=lambda t: (t.exam_date, -t.item.offset, _URGENCY.get(t.phase, 99)))
+    return by_day, unplaced
+
+
+def _find_slot(
+    preferred: date,
+    *,
+    is_valid: Callable[[date], bool],
+    used: dict[date, int],
+    minutes: int,
+    cap: int | None,
+    max_back_days: int,
+) -> date | None:
+    """Primer día hacia atrás desde `preferred` (excluido) con hueco para `minutes`."""
+    d = preferred
+    for _ in range(max_back_days):
+        d -= timedelta(days=1)
+        if is_valid(d) and (cap is None or used.get(d, 0) + minutes <= cap):
+            return d
+    return None

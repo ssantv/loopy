@@ -68,6 +68,12 @@ async def _mk_subject(env, name="Sociales", color="#ff0000") -> int:
     return r.json()["id"]
 
 
+async def _mk_exam(env, subject_id: int, exam_date: date) -> int:
+    r = await env.client.post("/api/exams", json={"subject_id": subject_id, "exam_date": exam_date.isoformat()})
+    assert r.status_code in (200, 201), r.text
+    return r.json()["id"]
+
+
 # ------------------------------------------------------------------ timetable
 
 
@@ -356,6 +362,214 @@ async def test_tope_de_estudio_por_defecto_y_editable(env):
     # Negativo no.
     assert (await env.client.patch("/api/auth/me", json={"study_max_minutes": -1})).status_code == 422
     del tok
+
+
+# ------------------------------------------- tope de carga en el calendario
+
+
+async def test_el_calendario_reparte_la_carga_entre_examenes(env):
+    """Dos exámenes el mismo día no deben pedir 60 min de estudio la misma tarde."""
+    await _authed(env)
+    a = await _mk_subject(env, "Lengua")
+    b = await _mk_subject(env, "Mates")
+    # Cada asignatura: una sola sesión de 30 min, el día antes del examen.
+    for sid in (a, b):
+        await env.client.patch(f"/api/subjects/{sid}", json={"prep_minutes": 30, "session_minutes": 30})
+    # Los dos exámenes el mismo día.
+    await _mk_exam(env, a, date(2026, 10, 15))
+    await _mk_exam(env, b, date(2026, 10, 15))
+    # Tope de 30 min al día.
+    await env.client.patch("/api/auth/me", json={"study_max_minutes": 30})
+
+    r = await env.client.get("/api/calendar", params={"from": "2026-10-12", "to": "2026-10-14"})
+    assert r.status_code == 200
+    days = r.json()["days"]
+
+    def minutos(d: str) -> int:
+        return sum(i["minutes"] for i in days.get(d, {}).get("plan", []))
+
+    # Ningún día se pasa del tope...
+    for d in ("2026-10-12", "2026-10-13", "2026-10-14"):
+        assert minutos(d) <= 30, (d, days.get(d))
+    # ...y las dos sesiones siguen estando, solo que en días distintos.
+    assert sum(minutos(d) for d in ("2026-10-12", "2026-10-13", "2026-10-14")) == 60
+    # Y todo ha cabido: no hay minutos que reportar como no colocables.
+    assert r.json()["unplaced_study_minutes"] == 0
+
+
+async def test_con_tope_cero_las_dos_sesiones_caen_el_mismo_dia(env):
+    """Sin tope (0) el plan no se toca: es la referencia del test anterior."""
+    await _authed(env)
+    a = await _mk_subject(env, "Lengua")
+    b = await _mk_subject(env, "Mates")
+    for sid in (a, b):
+        await env.client.patch(f"/api/subjects/{sid}", json={"prep_minutes": 30, "session_minutes": 30})
+    await _mk_exam(env, a, date(2026, 10, 15))
+    await _mk_exam(env, b, date(2026, 10, 15))
+    await env.client.patch("/api/auth/me", json={"study_max_minutes": 0})
+
+    days = (await env.client.get("/api/calendar", params={"from": "2026-10-12", "to": "2026-10-14"})).json()["days"]
+    minutos_14 = sum(i["minutes"] for i in days.get("2026-10-14", {}).get("plan", []))
+    assert minutos_14 == 60  # las dos sesiones juntas, como antes
+
+
+async def test_el_plan_de_examen_salta_los_dias_sin_cole(env):
+    await _authed(env)
+    sid = await _mk_subject(env, "Sociales")
+    await env.client.patch(f"/api/subjects/{sid}", json={"prep_minutes": 30, "session_minutes": 30})
+    exam = await _mk_exam(env, sid, date(2026, 10, 12))  # lunes
+    # El fin de semana anterior no es cole: lo marcamos como puente.
+    await env.client.post("/api/off-days", json={"start_on": "2026-10-10", "end_on": "2026-10-11"})
+
+    r = await env.client.get(f"/api/exams/{exam}/plan", params={"from": "2026-10-05", "to": "2026-10-12"})
+    assert r.status_code == 200, r.text
+    dias = {i["date"] for i in r.json()["items"]}
+    assert "2026-10-11" not in dias
+    assert "2026-10-10" not in dias
+
+
+# ------------------------------------------- fecha límite en el alta rápida
+
+
+async def _quick_add(env, items, day="2026-09-29"):
+    """POST /api/checkin/items y devuelve el JSON."""
+    r = await env.client.post("/api/checkin/items", json={"day": day, "items": items})
+    return r
+
+
+async def test_deber_va_para_el_siguiente_dia_de_clase_y_no_para_manana(env):
+    """El caso del planteamiento: sociales lunes y martes, añadido un martes."""
+    await _authed(env)
+    sociales = await _mk_subject(env, "Sociales")
+    await env.client.post("/api/timetable", json={"subject_id": sociales, "day_of_week": 0})  # lunes
+    await env.client.post("/api/timetable", json={"subject_id": sociales, "day_of_week": 1})  # martes
+
+    r = await _quick_add(env, [{"type": "deber", "title": "Tema 3", "subject_id": sociales}])
+    assert r.status_code == 201, r.text
+    deber = r.json()["deberes"][0]
+
+    # 2026-09-29 es martes: el siguiente día de clase es el lunes 2026-10-05.
+    assert deber["assigned_on"] == "2026-09-29"
+    assert deber["due_on"] == "2026-10-05"
+    assert deber["due_from_rule"] == "próximo día de clase"
+    assert deber["source_kind"] == "asignatura"
+    assert deber["source_name"] == "Sociales"
+
+
+async def test_la_fecha_limite_explicita_manda_sobre_el_horario(env):
+    await _authed(env)
+    sociales = await _mk_subject(env)
+    await env.client.post("/api/timetable", json={"subject_id": sociales, "day_of_week": 0})
+
+    r = await _quick_add(env, [{"type": "deber", "title": "Tema 3", "subject_id": sociales, "due_on": "2026-09-30"}])
+    deber = r.json()["deberes"][0]
+    assert deber["due_on"] == "2026-09-30"
+    assert deber["due_from_rule"] == "manual"
+
+
+async def test_la_fecha_limite_salta_los_dias_sin_cole(env):
+    await _authed(env)
+    sociales = await _mk_subject(env)
+    await env.client.post("/api/timetable", json={"subject_id": sociales, "day_of_week": 0})  # lunes
+    # El lunes siguiente es puente.
+    await env.client.post("/api/off-days", json={"start_on": "2026-10-05", "end_on": "2026-10-09"})
+
+    r = await _quick_add(env, [{"type": "deber", "title": "Tema 3", "subject_id": sociales}])
+    # Salta al lunes de después, no al 5 ni al 6.
+    assert r.json()["deberes"][0]["due_on"] == "2026-10-12"
+
+
+async def test_deber_de_extraescolar_usa_el_dia_de_la_extraescolar(env):
+    await _authed(env)
+    extra = (
+        await env.client.post(
+            "/api/extracurriculars",
+            json={
+                "name": "Natación",
+                "day_of_week": 2,
+                "start_time": "18:00:00",
+                "end_time": "19:00:00",
+            },
+        )
+    ).json()
+
+    r = await _quick_add(env, [{"type": "deber", "title": "Traer bañador", "extracurricular_id": extra["id"]}])
+    deber = r.json()["deberes"][0]
+    # 2026-09-30 es miércoles.
+    assert deber["due_on"] == "2026-09-30"
+    assert deber["due_from_rule"] == "próxima extraescolar"
+    assert deber["source_kind"] == "extraescolar"
+    assert deber["source_name"] == "Natación"
+
+
+async def test_encargo_sin_origen_se_queda_sin_fecha_limite(env):
+    """Los chores de casa y la rutina no tienen plazo: no se inventa uno."""
+    await _authed(env)
+    r = await _quick_add(env, [{"type": "deber", "title": "Sacar la basura"}])
+    deber = r.json()["deberes"][0]
+    assert deber["assigned_on"] == "2026-09-29"
+    assert deber["due_on"] is None
+    assert deber["due_from_rule"] is None
+    assert deber["source_kind"] is None
+
+
+async def test_item_puede_anular_el_dia_del_request(env):
+    await _authed(env)
+    r = await _quick_add(
+        env,
+        [
+            {"type": "deber", "title": "Para el lunes", "assigned_on": "2026-10-05"},
+            {"type": "deber", "title": "Para hoy"},
+        ],
+    )
+    assert r.status_code == 201, r.text
+    deberes = r.json()["deberes"]
+    assert deberes[0]["assigned_on"] == "2026-10-05"
+    assert deberes[1]["assigned_on"] == "2026-09-29"
+
+
+async def test_plantilla_rellena_el_deber_y_calcula_su_fecha(env):
+    await _authed(env)
+    lengua = await _mk_subject(env, "Lengua")
+    await env.client.post("/api/timetable", json={"subject_id": lengua, "day_of_week": 3})  # jueves
+    tpl = (
+        await env.client.post(
+            "/api/homework-templates",
+            json={"title": "Leer 20 min", "subject_id": lengua, "est_minutes": 20},
+        )
+    ).json()
+
+    # Sin título: lo pone la plantilla. Y la fecha se deduce de su asignatura.
+    r = await _quick_add(env, [{"type": "deber", "template_id": tpl["id"]}])
+    assert r.status_code == 201, r.text
+    deber = r.json()["deberes"][0]
+    assert deber["title"] == "Leer 20 min"
+    assert deber["est_minutes"] == 20
+    assert deber["subject_id"] == lengua
+    # Martes 29 -> jueves 1 de octubre.
+    assert deber["due_on"] == "2026-10-01"
+
+
+async def test_quick_add_rechaza_referencias_inexistentes(env):
+    await _authed(env)
+    r = await _quick_add(env, [{"type": "deber", "title": "X", "subject_id": 999}])
+    assert r.status_code == 404
+    r = await _quick_add(env, [{"type": "deber", "title": "X", "extracurricular_id": 999}])
+    assert r.status_code == 404
+    r = await _quick_add(env, [{"type": "deber", "template_id": 999}])
+    assert r.status_code == 404
+
+
+async def test_examen_sigue_sin_fecha_limite_de_deber(env):
+    """Un examen es un examen: no le aplicamos la regla del próximo día de clase."""
+    await _authed(env)
+    mates = await _mk_subject(env, "Matemáticas")
+    r = await _quick_add(env, [{"type": "examen", "subject_id": mates, "exam_date": "2026-10-15"}])
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert len(body["deberes"]) == 0
+    assert body["examenes"][0]["exam_date"] == "2026-10-15"
+    assert body["examenes"][0]["subject_name"] == "Matemáticas"
 
 
 # -------------------------------------------- lógica pura de SchoolCalendar

@@ -5,11 +5,13 @@ from datetime import date
 from app.services.planner import (
     ExamPlanCfg,
     PlanItem,
+    StudyTask,
     is_valid_day,
     plan_day,
     plan_progress,
     plan_span,
     resumen_complete,
+    spread_daily_load,
 )
 
 
@@ -270,3 +272,121 @@ def test_progress_cuenta_el_resumen_terminado():
     cfg = ExamPlanCfg.from_minutes(prep_minutes=120, session_minutes=30, resumen_total_pages=3)
     p = plan_progress(date(2026, 9, 25), cfg, done_dates=set(), today=date(2026, 9, 24), resumen_done_pages=3)
     assert p["total_sessions"] == 3  # 4 sesiones menos la de resumen
+
+
+# ---------------------------------------------------------------- días sin cole
+
+
+def test_un_puente_no_cuenta_como_dia_de_estudio():
+    assert is_valid_day(date(2026, 9, 28), True) is True
+    assert is_valid_day(date(2026, 9, 28), True, {date(2026, 9, 28)}) is False
+
+
+def test_el_plan_salta_las_vacaciones():
+    """Examen el lunes 12/10 con el puente del 5 al 9: el repaso-final sigue
+    siendo el día 11, pero el resto del plan se reparte sin tocar el puente."""
+    examen = date(2026, 10, 12)
+    puente = {date(2026, 10, d) for d in range(5, 10)}
+    fases = {i.phase: i.date for i in plan_span(examen, _cfg(), off_days=puente)}
+    assert fases["repaso-final"] == date(2026, 10, 11)
+    assert date(2026, 10, 11) not in puente
+    # Ningún día del plan cae dentro del puente.
+    assert not (set(fases.values()) & puente)
+
+
+def test_un_examen_durante_vacaciones_no_tiene_plan_dentro():
+    examen = date(2026, 12, 24)
+    navidad = {date(2026, 12, d) for d in range(23, 31)}
+    items = plan_span(examen, _cfg(), off_days=navidad)
+    assert items  # sigue habiendo plan...
+    assert not ({i.date for i in items} & navidad)  # ...pero no dentro de las vacaciones
+
+
+# ------------------------------------------------------- reparto de carga diaria
+
+
+def _task(exam: date, day: date, phase: str, subject_id: int = 1, minutes: int = 30) -> StudyTask:
+    return StudyTask(
+        exam_date=exam,
+        subject_id=subject_id,
+        item=PlanItem(date=day, phase=phase, offset=(exam - day).days, minutes=minutes),
+    )
+
+
+def test_sin_colision_no_se_mueve_nada():
+    """Con un solo examen el plan se queda donde está: el reparto no toca nada."""
+    examen = date(2026, 9, 25)
+    tasks = [_task(examen, d, "repaso-final") for d in (date(2026, 9, 21), date(2026, 9, 22), date(2026, 9, 23))]
+    por_dia, sin_cabida = spread_daily_load(tasks, daily_max_minutes=60)
+    assert sin_cabida == []
+    assert por_dia == {
+        date(2026, 9, 21): [tasks[0]],
+        date(2026, 9, 22): [tasks[1]],
+        date(2026, 9, 23): [tasks[2]],
+    }
+
+
+def test_tres_examenes_el_mismo_dia_se_reparten():
+    """El caso real: 3 asignaturas con sesión el mismo día = 90 min de golpe."""
+    dia = date(2026, 9, 24)
+    tasks = [
+        _task(date(2026, 9, 25), dia, "repaso-final", subject_id=1),
+        _task(date(2026, 9, 26), dia, "repaso-final", subject_id=2),
+        _task(date(2026, 9, 26), dia, "repaso-final", subject_id=3),
+    ]
+    por_dia, sin_cabida = spread_daily_load(tasks, daily_max_minutes=60)
+
+    assert sin_cabida == []
+    # Ningún día pasa de 60 min.
+    for day, items in por_dia.items():
+        assert sum(i.minutes for i in items) <= 60, day
+    # Con tope 60 caben dos sesiones de 30. Se quedan las dos más urgentes: el
+    # examen del 25 y uno de los del 26.
+    assert [t.subject_id for t in por_dia[dia]] == [1, 2]
+    # La tercera se ha movido antes, no después.
+    movida = [d for d in por_dia if d != dia]
+    assert movida and all(d < dia for d in movida)
+
+
+def test_el_repaso_final_no_se_mueve_nunca():
+    """El repaso-final va pegado al examen aunque el día esté lleno."""
+    dia = date(2026, 9, 24)
+    relleno = [_task(date(2026, 10, 20), dia, "resumen", subject_id=9)]
+    repaso = _task(date(2026, 9, 25), dia, "repaso-final", subject_id=1)
+    # El relleno es de un examen más lejano, así que es menos urgente.
+    por_dia, sin_cabida = spread_daily_load([*relleno, repaso], daily_max_minutes=30)
+    assert sin_cabida == []
+    assert por_dia[dia] == [repaso]
+
+
+def test_el_reparto_no_usa_dias_sin_cole():
+    dia = date(2026, 9, 24)
+    tareas = [_task(date(2026, 9, 25), dia, "repaso-final", subject_id=1), _task(date(2026, 9, 26), dia, "practica", 2)]
+    sin_cole = {date(2026, 9, 23), date(2026, 9, 22)}
+    por_dia, sin_cabida = spread_daily_load(
+        tareas, daily_max_minutes=30, is_valid=lambda d: d not in sin_cole
+    )
+    assert sin_cabida == []
+    assert not (set(por_dia) & sin_cole)
+    assert por_dia[dia][0].subject_id == 1
+
+
+def test_lo_que_no_cabe_se_reporta_en_vez_de_desaparecer():
+    """Con el tope muy bajo y casi sin días libres, se dice qué no cabe."""
+    dia = date(2026, 9, 24)
+    tareas = [_task(date(2026, 9, 25), dia, "repaso-final", subject_id=i) for i in range(3)]
+    por_dia, sin_cabida = spread_daily_load(tareas, daily_max_minutes=30, max_back_days=1)
+    # Caben dos: el 24 y el 23. La tercera no tiene dónde ir.
+    assert len(sin_cabida) == 1
+    assert sum(i.minutes for i in sin_cabida) == 30
+    assert len(por_dia[dia]) == 1
+    assert len(por_dia[date(2026, 9, 23)]) == 1
+
+
+def test_tope_cero_o_negativo_se_trata_como_sin_tope():
+    """`study_max_minutes = 0` significa "sin tope" y no "no puedes estudiar"."""
+    dia = date(2026, 9, 24)
+    tareas = [_task(date(2026, 9, 25), dia, "repaso-final", subject_id=i) for i in range(3)]
+    por_dia, sin_cabida = spread_daily_load(tareas, daily_max_minutes=0)
+    assert sin_cabida == []
+    assert por_dia == {dia: tareas}

@@ -353,6 +353,7 @@ class CalendarPlanOut(BaseModel):
     status: str | None  # done | skip | None (pendiente)
     done_at: datetime | None
     label: str | None
+    minutes: int = 30  # duración de la sesión de ese día
     session: bool = False  # True si es sesión adelantada (no viene del plan)
 
 
@@ -380,3 +381,6 @@ class CalendarOut(BaseModel):
     from_date: date
     to: date
     days: dict[str, CalendarDayOut]
+    # Minutos de estudio que no han cabido dentro del tope diario en este rango.
+    # El frontend puede avisar ("para esta semana no caben tantos exámenes").
+    unplaced_study_minutes: int = 0

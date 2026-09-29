@@ -26,10 +26,41 @@ from app.schemas.school import (
     SubjectSessionRequest,
 )
 from app.services.engine import as_rules, scheduled_dates_between
-from app.services.planner import ExamPlanCfg, plan_progress, plan_span, resumen_complete
+from app.services.planner import ExamPlanCfg, StudyTask, plan_progress, plan_span, resumen_complete, spread_daily_load
 from app.services.schedule import load_school_calendar
 
 router = APIRouter(prefix="/api", tags=["colegio"])
+
+# Cuántos días antes del rango pedido se genera el plan, para que el reparto de
+# carga tenga dónde empujar una sesión sin que se salga del cálculo.
+SPREAD_LOOKBACK_DAYS = 90
+
+
+def _expand_off_days(off_rows: list[OffDay], start: date, end: date) -> set[date]:
+    """Días sin cole como fechas sueltas, recortados al rango [start, end].
+
+    El planner trabaja con un `set[date]` (igual que hace con los fines de
+    semana), no con rangos: así no tiene que saber nada de "vacaciones", solo
+    de "este día no".
+    """
+    days: set[date] = set()
+    for row in off_rows:
+        d = max(row.start_on, start)
+        last = min(row.end_on, end)
+        while d <= last:
+            days.add(d)
+            d += timedelta(days=1)
+    return days
+
+
+async def _off_dates(db: AsyncSession, user_id: int, start: date, end: date) -> set[date]:
+    """Días sin cole de un usuario, ya expandidos, para pasárselos al planner."""
+    rows = (
+        await db.execute(
+            select(OffDay).where(OffDay.user_id == user_id, OffDay.end_on >= start, OffDay.start_on <= end)
+        )
+    ).scalars().all()
+    return _expand_off_days(rows, start, end)
 
 
 # ---------------------------------------------------------------- helpers
@@ -174,16 +205,23 @@ async def exam_plan(
     done = (await db.execute(select(StudyCompletion).where(StudyCompletion.exam_id == exam.id))).scalars().all()
     done_by_date = {d.date: d for d in done}
 
+    # El plan salta los días sin cole. Se cubre de sobra el rango que puede
+    # recorrer `plan_span` hacia atrás para no quedarse corto.
+    off_days = await _off_dates(
+        db, user.id, min(start, exam.exam_date - timedelta(days=400)), end
+    )
+
     prog = plan_progress(
         exam.exam_date,
         cfg,
         done_dates={d.date for d in done if d.status in ("done", "skip")},
         today=start,
         resumen_done_pages=subject.resumen_done_pages,
+        off_days=off_days,
     )
 
     items: list[PlanItemOut] = []
-    for item in plan_span(exam.exam_date, cfg, start, end, subject.resumen_done_pages):
+    for item in plan_span(exam.exam_date, cfg, start, end, subject.resumen_done_pages, off_days):
         comp = done_by_date.get(item.date)
         items.append(
             PlanItemOut(
@@ -479,8 +517,6 @@ async def calendar(
             select(StudyCompletion).where(
                 StudyCompletion.user_id == user.id,
                 StudyCompletion.exam_id.is_not(None),
-                StudyCompletion.date >= start,
-                StudyCompletion.date <= end,
             )
         )
     ).scalars().all()
@@ -488,26 +524,74 @@ async def calendar(
     for c in completions:
         completed_by_exam.setdefault(c.exam_id, {})[c.date] = c
 
+    # Días sin cole del rango, expandidos a fechas sueltas para el planner.
+    off_rows = (
+        await db.execute(
+            select(OffDay).where(OffDay.user_id == user.id, OffDay.end_on >= start, OffDay.start_on <= end)
+        )
+    ).scalars().all()
+    off_days = _expand_off_days(off_rows, start, end)
+
+    study_tasks: list[StudyTask] = []
+    exam_meta: dict[int, tuple[Exam, Subject | None, int]] = {}
     for ex in exams:
         subject = subjects.get(ex.subject_id)
         cfg = _cfg_for(subject, ex) if subject is not None else ExamPlanCfg()
         done_pages = subject.resumen_done_pages if subject is not None else 0
-        done_by_date = completed_by_exam.get(ex.id, {})
-        items = plan_span(ex.exam_date, cfg, start, end, done_pages)
-        for it in items:
-            comp = done_by_date.get(it.date)
-            days.setdefault(it.date.isoformat(), CalendarDayOut()).plan.append(
+        exam_meta[ex.id] = (ex, subject, done_pages)
+        # Se genera desde antes de `start` porque el reparto de carga puede
+        # empujar una sesión a días anteriores al rango pedido.
+        for it in plan_span(
+            ex.exam_date,
+            cfg,
+            start - timedelta(days=SPREAD_LOOKBACK_DAYS),
+            end,
+            done_pages,
+            off_days,
+        ):
+            study_tasks.append(StudyTask(exam_date=ex.exam_date, subject_id=ex.subject_id, item=it, exam_id=ex.id))
+
+    # Reparto de carga: con varios exámenes, los planes por separado pedirían
+    # varias sesiones el mismo día. Lo ya completado se queda anclado a su día
+    # (el "hecho" se guardó con esa fecha) y solo se mueve lo pendiente.
+    done_tasks: list[StudyTask] = []
+    pending_tasks: list[StudyTask] = []
+    for t in study_tasks:
+        if t.exam_id in completed_by_exam and t.date in completed_by_exam[t.exam_id]:
+            done_tasks.append(t)
+        else:
+            pending_tasks.append(t)
+    busy: dict[date, int] = {}
+    for t in done_tasks:
+        busy[t.date] = busy.get(t.date, 0) + t.minutes
+    plan_por_dia, sin_cabida = spread_daily_load(
+        pending_tasks,
+        daily_max_minutes=user.study_max_minutes,
+        is_valid=cal.is_school_day,
+        busy=busy,
+    )
+    for t in done_tasks:
+        plan_por_dia.setdefault(t.date, []).append(t)
+
+    for day, day_tasks in plan_por_dia.items():
+        if not (start <= day <= end):
+            continue
+        for t in day_tasks:
+            ex, subject, done_pages = exam_meta[t.exam_id]
+            comp = completed_by_exam.get(ex.id, {}).get(day)
+            days.setdefault(day.isoformat(), CalendarDayOut()).plan.append(
                 CalendarPlanOut(
                     exam_id=ex.id,
                     subject_id=ex.subject_id,
                     subject_name=subject.name if subject else None,
                     subject_color=subject.color if subject else None,
-                    phase=it.phase,
-                    date=it.date,
-                    offset=it.offset,
+                    phase=t.phase,
+                    date=day,
+                    offset=t.item.offset,
                     status=comp.status if comp else None,
                     done_at=comp.done_at if comp else None,
-                    label=_resumen_label(subject, it.phase, done_pages) if subject else None,
+                    label=_resumen_label(subject, t.phase, done_pages) if subject else None,
+                    minutes=t.minutes,
                 )
             )
 
@@ -533,11 +617,6 @@ async def calendar(
     # aportan algo: la respuesta sigue siendo dispersa (un año vacío sigue
     # siendo `{}`) pero las vacaciones y las extraescolares ya salen, sin que
     # el frontend tenga que descargarse 365 entradas vacías.
-    off_rows = (
-        await db.execute(
-            select(OffDay).where(OffDay.user_id == user.id, OffDay.end_on >= start, OffDay.start_on <= end)
-        )
-    ).scalars().all()
     day = start
     while day <= end:
         is_off = cal.is_off_day(day)
@@ -555,4 +634,6 @@ async def calendar(
                 )
         day += timedelta(days=1)
 
-    return CalendarOut(from_date=start, to=end, days=days)
+    return CalendarOut(
+        from_date=start, to=end, days=days, unplaced_study_minutes=sum(t.minutes for t in sin_cabida)
+    )
