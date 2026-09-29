@@ -14,6 +14,23 @@ class RegisterRequest(BaseModel):
     timezone: str = Field(default="UTC", max_length=64)
 
 
+class ChildCreateRequest(BaseModel):
+    """Perfil de niño creado por una cuenta adulta. Entra con nombre + PIN."""
+
+    display_name: str = Field(min_length=1, max_length=80)
+    pin: str = Field(min_length=4, max_length=6, pattern="^[0-9]{4,6}$")
+    birth_date: datetime
+    course: str | None = Field(default=None, max_length=80)
+    timezone: str = Field(default="UTC", max_length=64)
+
+
+class ChildLoginRequest(BaseModel):
+    """Entrada de los menores en su propia cuenta: nombre + PIN."""
+
+    display_name: str = Field(min_length=1, max_length=80)
+    pin: str = Field(min_length=4, max_length=6, pattern="^[0-9]{4,6}$")
+
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
@@ -21,13 +38,14 @@ class LoginRequest(BaseModel):
 
 class UserOut(BaseModel):
     id: int
-    email: EmailStr
+    email: EmailStr | None
     profile_type: str
     display_name: str | None
     course: str | None = None
     timezone: str
     notification_tone: str
     tone_source: str
+    parent_id: int | None = None
     age: int | None
     created_at: datetime
 

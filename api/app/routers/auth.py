@@ -1,5 +1,6 @@
 """Autenticación: registro, login, logout y perfil actual."""
 
+import secrets
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -12,6 +13,8 @@ from app.db import get_db
 from app.models import PasswordResetToken, Session, User
 from app.schemas.auth import (
     AuthResponse,
+    ChildCreateRequest,
+    ChildLoginRequest,
     LoginRequest,
     PasswordResetConfirm,
     PasswordResetRequest,
@@ -30,6 +33,9 @@ bearer = HTTPBearer(auto_error=False)
 
 # Fuerza bruta: 5 intentos fallidos por (email, IP) en una ventana de 5 min.
 _login_limiter = SlidingWindowLimiter(settings.login_max_attempts, settings.login_window_seconds)
+# Lo mismo para el PIN de los niños: un PIN corto (4-6 dígitos) hace el límite
+# de intentos más importante que en email porque es trivial de inventar.
+_pin_limiter = SlidingWindowLimiter(settings.login_max_attempts, settings.login_window_seconds)
 # Peticiones de reset: 3 por (email, IP) en la misma ventana, para no spamear
 # correos a un tercero que sepa el email de alguien.
 _reset_limiter = SlidingWindowLimiter(settings.password_reset_max_requests, settings.login_window_seconds)
@@ -83,6 +89,7 @@ async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db))
         profile_type=payload.profile_type,
         display_name=payload.display_name,
         timezone=payload.timezone,
+        birth_date=payload.birth_date,
     )
     # Tono inicial: si hay fecha de nacimiento (niño), se sugiere por edad.
     suggested = tone_for_age(user.age())
@@ -92,6 +99,78 @@ async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db))
     await db.flush()
     token, session = await _create_session(db, user)
     return AuthResponse(token=token, user=UserOut(**user_out_dict(user)))
+
+
+@router.post("/children", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+async def create_child(
+    payload: ChildCreateRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserOut:
+    """Crea un perfil de niño vinculado a la cuenta adulta que lo abre.
+
+    Los menores no tienen email propio: entran con nombre + PIN. El adulto
+    guarda en `parent_id` quién creó la cuenta, y el `birth_date` se usa para
+    sugerir el tono de notificación por edad.
+    """
+    if user.profile_type != "adult":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Solo el perfil adulto puede crear cuentas de niño"
+        )
+    child = User(
+        # Sin email: la entrada es nombre + PIN. El hash de contraseña es
+        # basura inutilizable: nunca se loguea por contraseña.
+        password_hash=hash_password(secrets.token_urlsafe(48)),
+        profile_type="child",
+        display_name=payload.display_name,
+        course=payload.course,
+        timezone=payload.timezone,
+        parent_id=user.id,
+        pin_hash=hash_password(payload.pin),
+        birth_date=payload.birth_date,
+    )
+    # Tono inicial: sugerido por edad (misma lógica que el registro).
+    suggested = tone_for_age(child.age())
+    if suggested != child.notification_tone:
+        child.notification_tone = suggested
+    db.add(child)
+    await db.commit()
+    await db.refresh(child)
+    return UserOut(**user_out_dict(child))
+
+
+@router.post("/child-login", response_model=AuthResponse)
+async def child_login(
+    payload: ChildLoginRequest, request: Request, db: AsyncSession = Depends(get_db)
+) -> AuthResponse:
+    """Entrada de los menores en su cuenta: nombre + PIN (sin email)."""
+    key = _login_key(request, payload.display_name)
+    retry_after = _pin_limiter.retry_after(key)
+    if retry_after:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Demasiados intentos fallidos. Inténtalo de nuevo en {retry_after} s.",
+            headers={"Retry-After": str(retry_after)},
+        )
+    matches = (
+        await db.execute(
+            select(User).where(
+                User.profile_type == "child",
+                User.display_name == payload.display_name,
+                User.pin_hash.is_not(None),
+            )
+        )
+    ).scalars().all()
+    # Un nombre puede repetirse: solo entra si exactamente una cuenta coincide
+    # con el PIN. Dos coincidencias se tratan como fallo, no se decide por uno.
+    verified = [candidate for candidate in matches if verify_password(payload.pin, candidate.pin_hash)]
+    if len(verified) != 1:
+        _pin_limiter.record_failure(key)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Nombre o PIN incorrectos")
+    # Login correcto: el contador de esa clave se olvida.
+    _pin_limiter.reset(key)
+    token, session = await _create_session(db, verified[0])
+    return AuthResponse(token=token, user=UserOut(**user_out_dict(verified[0])))
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -239,6 +318,7 @@ def user_out_dict(user: User) -> dict:
         "timezone": user.timezone,
         "notification_tone": user.notification_tone,
         "tone_source": user.tone_source,
+        "parent_id": user.parent_id,
         "age": user.age(),
         "created_at": user.created_at,
     }

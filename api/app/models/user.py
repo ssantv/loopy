@@ -3,6 +3,10 @@
 Perfil doble: cada cuenta tiene dos perfiles independientes (adulto y niño).
 El `profile_type` del usuario es el perfil "jefe" (el que configura la cuenta);
 el perfil hijo se crea opcionalmente más adelante.
+
+Cuenta de niño: la crea un adulto (su `parent_id`) y entra con nombre + PIN,
+sin email. El email solo es obligatorio para cuentas adultas, que son las que
+usan la recuperación de contraseña.
 """
 
 import hashlib
@@ -20,13 +24,21 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    email: Mapped[str] = mapped_column(String(320), unique=True, index=True, nullable=False)
+    # Obligatorio en cuentas adultas (recuperación de contraseña); las cuentas
+    # de niño creadas por un adulto no tienen email y entran con nombre + PIN.
+    email: Mapped[str | None] = mapped_column(String(320), unique=True, index=True, nullable=True)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     # Perfil que configura la cuenta: adult | child
     profile_type: Mapped[str] = mapped_column(String(8), nullable=False, default="adult")
     display_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
     # Curso del niño ("4º de Primaria"). Solo informativo: se pinta en el perfil.
     course: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # Cuenta adulta que creó y gestiona a este niño. Null en el resto.
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    # PIN de entrada del niño (argon2). Null en cuentas adultas.
+    pin_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Zona horaria del usuario (IANA, p.ej. "Europe/Madrid").
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="UTC")
     # Notificaciones: tono y origen (auto según edad, o manual).
