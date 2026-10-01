@@ -1,4 +1,4 @@
-﻿"""Tests de integraciÃ³n del outbox/poller con SQLite en memoria."""
+﻿"""Tests de integración del outbox/poller con SQLite en memoria."""
 
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ async def test_fill_outbox_crea_y_deduplica():
         kinds = {r.kind: r for r in rows}
         assert set(kinds) == {"reminder", "checkin", "summary"}
         assert kinds["reminder"].due_at == datetime(2026, 9, 20, 10, 0)  # 12:00 Madrid
-        # domingo 8:00 ya pasÃ³ (Madrid 11:00) â†’ prÃ³ximo domingo 27
+        # domingo 8:00 ya pasó (Madrid 11:00) â†’ próximo domingo 27
         assert kinds["summary"].due_at.date().isoformat().endswith("-27")
         # lunes 21 20:00 Madrid = 18:00 UTC
         assert kinds["checkin"].due_at == datetime(2026, 9, 21, 18, 0)
@@ -142,7 +142,7 @@ async def test_poller_envia_y_marca_sent(monkeypatch):
         row = (await db.execute(select(NotificationOutbox))).scalars().one()
         assert row.status == "sent"
         assert row.sent_at == NOW
-        # la suscripciÃ³n sigue viva
+        # la suscripción sigue viva
         assert len((await db.execute(select(PushSubscription))).scalars().all()) == 1
 
 

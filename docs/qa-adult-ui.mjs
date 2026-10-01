@@ -17,7 +17,8 @@
   note("login ok");
 
   // ---------- Casa ----------
-  await page.getByRole("link", { name: "Hogar", exact: true }).click();
+  // La pestaña se llama "Casa", no "Hogar": "hogar" es la categoría de tarea.
+  await page.getByRole("link", { name: "Casa", exact: true }).click();
   await page.waitForSelector("text=Nueva tarea", { timeout: 10000 });
 
   await page.getByLabel("Tipo").click();
@@ -34,8 +35,10 @@
   note("casa: habitación Salón preparada");
 
   // ---------- Compra ----------
-  await page.getByRole("link", { name: "Compra", exact: true }).click();
-  await page.waitForSelector("text=Lista de la compra", { timeout: 10000 });
+  // Se va por URL: la subnavegación solo enseña las secciones de la página en
+  // la que estás, así que "Compra" no está enlazada desde Casa.
+  await page.goto("http://localhost:5173/compra");
+  await page.locator("h4", { hasText: "Compra" }).waitFor({ timeout: 10000 });
 
   // recomendado: primero comprar y repetir para que aparezca sugerencia
   for (let k = 0; k < 2; k++) {
@@ -85,7 +88,7 @@
   }
 
   // ---------- Inicio ----------
-  await page.getByRole("link", { name: "Inicio", exact: true }).click();
+  await page.getByRole("link", { name: "Mi día", exact: true }).click();
   await page.waitForTimeout(1000);
   note("inicio: 'Recoger la mesa' visible=" + (await page.getByText("Recoger la mesa").count()));
 

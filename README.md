@@ -123,6 +123,8 @@ api\.venv\Scripts\python.exe docs\qa_run.py -- node <ruta-a-browser.mjs> http://
 
 Todo lo que va detrás del script es el comando a ejecutar; `qa_run.py` pasa el código de salida del guion tal cual. Ejecutarlo directamente (sin envoltorio) también funciona, pero deja las cuentas atrás.
 
+Dos guiones (`qa-prueba-session.mjs` y `qa-push-ui.mjs`) no funcionan contra el servidor de desarrollo: esperan `navigator.serviceWorker`, y Vite solo registra el service worker en el build de producción. Van contra `npm run preview` (puerto 4173), con `npm run build` ejecutado antes.
+
 Ver la planificación funcional completa en [`Planteamiento.md`](Planteamiento.md).
 
 ## Seguridad

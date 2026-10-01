@@ -1,10 +1,10 @@
-﻿"""Routers del mÃ³dulo adulto: hogar por habitaciones, compra y resumen diario.
+﻿"""Routers del módulo adulto: hogar por habitaciones, compra y resumen diario.
 
-Planteamiento Â§2.5 / Â§5:
+Planteamiento §2.5 / §5:
 - `GET /api/home` agrupa por habitaciones lo pendiente y lo adelantable.
 - `POST /api/tasks/{id}/advance` consume la siguiente ocurrencia (next > hoy).
 - Compra: lista + comprar/deshacer + quitar (solo lo no comprado) + Recomendar.
-- Resumen diario: config (hora + dÃ­as) y excepciones `skip`/`add`.
+- Resumen diario: config (hora + días) y excepciones `skip`/`add`.
 Compra y resumen son solo para el perfil adulto.
 """
 
@@ -51,7 +51,7 @@ def _require_adult(user: User) -> None:
     if user.profile_type != "adult":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Esta secciÃ³n es solo para el perfil adulto",
+            detail="Esta sección es solo para el perfil adulto",
         )
 
 
@@ -70,7 +70,7 @@ def _home_item(item: dict) -> HomeItem:
 
 @router.get("/home", response_model=HomeOut)
 async def home_day(
-    day: date | None = Query(default=None, description="DÃ­a a consultar (por defecto hoy local)"),
+    day: date | None = Query(default=None, description="Día a consultar (por defecto hoy local)"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> HomeOut:
@@ -114,9 +114,9 @@ async def advance_task(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> TaskDoneResponse:
-    """Completa la siguiente ocurrencia (estrictamente despuÃ©s de hoy).
+    """Completa la siguiente ocurrencia (estrictamente después de hoy).
 
-    Regla de las "Adelantadas" (Â§2.5): marcar aquÃ­ **consume** la ocurrencia y
+    Regla de las "Adelantadas" (§2.5): marcar aquí **consume** la ocurrencia y
     el siguiente queda tras hoy. Cero cambios si no hay nada que adelantar.
     """
     task = await _get_owned_task(task_id, user, db)
@@ -229,7 +229,7 @@ async def unpurchase_item(
 async def delete_shopping(
     item_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ) -> None:
-    """"Quitar": solo borra lo que nunca se comprÃ³; lo comprado queda como historial."""
+    """"Quitar": solo borra lo que nunca se compró; lo comprado queda como historial."""
     _require_adult(user)
     item = await _own_item(item_id, user, db)
     if item.purchased:
@@ -247,7 +247,7 @@ async def recommend_shopping(
     _require_adult(user)
     today = _today_local(user)
     since = today - timedelta(days=90)
-    # Normalizar en SQL: traemos nombres cronolÃ³gicos y agrupamos en Python (listas cortas).
+    # Normalizar en SQL: traemos nombres cronológicos y agrupamos en Python (listas cortas).
     purchased = (
         await db.execute(
             select(ShoppingItem.name, ShoppingItem.qty, ShoppingItem.purchased_at)
@@ -335,7 +335,7 @@ async def summary_month(
         first = date.fromisoformat(month + "-01")
     except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Mes invÃ¡lido"
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Mes inválido"
         ) from None
     next_first = first.replace(day=1)
     if next_first.month == 1:

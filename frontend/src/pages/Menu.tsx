@@ -171,7 +171,7 @@ export default function Menu() {
   const addWeek = useCallback(async () => {
     try {
       const res = await menuApi.addWeekToShopping(start);
-      showMsg(`${res.created} aÃ±adidos y ${res.updated} actualizados en la compra`);
+      showMsg(`${res.created} añadidos y ${res.updated} actualizados en la compra`);
     } catch (e) {
       setErr(e);
     }
@@ -181,7 +181,7 @@ export default function Menu() {
     async (recipeId: number) => {
       try {
         const res = await menuApi.addRecipeToShopping(recipeId);
-        showMsg(`${res.created} aÃ±adidos y ${res.updated} actualizados en la compra`);
+        showMsg(`${res.created} añadidos y ${res.updated} actualizados en la compra`);
       } catch (e) {
         setErr(e);
       }
@@ -240,7 +240,7 @@ export default function Menu() {
       <Box sx={{ maxWidth: 920, margin: "0 auto", padding: "1.5rem 1rem", pb: BOTTOM_BAR_PADDING }}>
         <SubNav area="casa" />
         <Typography variant="h4" sx={{ mb: 0.5 }}>
-          MenÃº semanal
+          Menú semanal
         </Typography>
         <Typography color="text.secondary" sx={{ mb: 2 }}>
           Planifica comidas para toda la semana, usa recetas en la compra y cubre tus objetivos.
@@ -260,7 +260,7 @@ export default function Menu() {
         <Tabs value={tab} onChange={(_e, v) => setTab(v)} sx={{ mb: 2 }}>
           <Tab label="Plan semanal" />
           <Tab label="Recetas" />
-          <Tab label="CategorÃ­as" />
+          <Tab label="Categorías" />
         </Tabs>
 
         {tab === 0 && (
@@ -410,7 +410,7 @@ function PlanTab({
           Recomendar huecos
         </Button>
         <Button size="small" variant="contained" onClick={onAddWeek}>
-          AÃ±adir a la compra
+          Añadir a la compra
         </Button>
       </Stack>
 
@@ -471,7 +471,7 @@ function PlanTab({
         </table>
       </Box>
       <Typography variant="caption" color="text.secondary">
-        {start} Â· Solo franjas activas (configÃºralas en Â«CategorÃ­asÂ»).
+        {start} · Solo franjas activas (configúralas en «Categorías»).
       </Typography>
     </Stack>
   );
@@ -511,7 +511,7 @@ function AssignDialog({
   return (
     <Dialog open onClose={onClose} fullWidth maxWidth="xs">
       <DialogTitle>
-        {SLOT_NAMES[slot]} Â· {weekdayOf(day)} {labelOf(day)}
+        {SLOT_NAMES[slot]} · {weekdayOf(day)} {labelOf(day)}
       </DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
@@ -537,7 +537,7 @@ function AssignDialog({
             onChange={(e) => setFreeText(e.target.value)}
           />
           {compatible.length === 0 && (
-            <Alert severity="info">No hay recetas para esta franja: crea una en Â«RecetasÂ».</Alert>
+            <Alert severity="info">No hay recetas para esta franja: crea una en «Recetas».</Alert>
           )}
         </Stack>
       </DialogContent>
@@ -591,7 +591,7 @@ function RecipesTab({
         </Button>
       </Stack>
       {recipes.length === 0 && (
-        <Alert severity="info">AÃºn no tienes recetas. Crea la primera para usarlas en el plan.</Alert>
+        <Alert severity="info">Aún no tienes recetas. Crea la primera para usarlas en el plan.</Alert>
       )}
       {Object.entries(byCat).map(([catId, list]) => (
         <section key={catId}>
@@ -611,12 +611,12 @@ function RecipesTab({
                 </Stack>
                 {r.ingredients.length > 0 && (
                   <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
-                    {r.ingredients.map((i) => `${i.name}${i.unit ? ` ${i.qty} ${i.unit}` : ""}`).join(" Â· ")}
+                    {r.ingredients.map((i) => `${i.name}${i.unit ? ` ${i.qty} ${i.unit}` : ""}`).join(" · ")}
                   </Typography>
                 )}
                 <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
                   <Button size="small" variant="outlined" onClick={() => onAddShopping(r.id)}>
-                    AÃ±adir a la compra
+                    Añadir a la compra
                   </Button>
                   <IconButton size="small" aria-label="editar receta" onClick={() => onEdit(r)}>
                     <EditIcon fontSize="small" />
@@ -688,7 +688,7 @@ const [edits, setEdits] = useState<Record<number, { min: string; max: string }>>
 
       <section>
         <Typography variant="h6" sx={{ mb: 1 }}>
-          CategorÃ­as y objetivos semanales
+          Categorías y objetivos semanales
         </Typography>
         <Stack spacing={1}>
           {goals.map((g) => {
@@ -701,7 +701,7 @@ const [edits, setEdits] = useState<Record<number, { min: string; max: string }>>
                     <Chip label="objetivo por defecto" size="small" variant="outlined" color="default" />
                   )}
                   {categories.find((c) => c.id === g.category_id && c.user_id !== null) && (
-                    <IconButton size="small" aria-label="borrar categorÃ­a" onClick={() => onDeleteCategory(g.category_id)}>
+                    <IconButton size="small" aria-label="borrar categoría" onClick={() => onDeleteCategory(g.category_id)}>
                       <DeleteIcon fontSize="small" />
                     </IconButton>
                   )}
@@ -709,7 +709,7 @@ const [edits, setEdits] = useState<Record<number, { min: string; max: string }>>
                 <Stack direction="row" spacing={1} alignItems="center">
                   <TextField
                     size="small"
-                    label="MÃ­nimo/semana"
+                    label="Mínimo/semana"
                     type="number"
                     inputProps={{ min: 0, max: 30 }}
                     value={edit.min}
@@ -718,7 +718,7 @@ const [edits, setEdits] = useState<Record<number, { min: string; max: string }>>
                   />
                   <TextField
                     size="small"
-                    label="MÃ¡ximo/semana"
+                    label="Máximo/semana"
                     type="number"
                     inputProps={{ min: 0, max: 30 }}
                     value={edit.max}
@@ -749,7 +749,7 @@ const [edits, setEdits] = useState<Record<number, { min: string; max: string }>>
 
       <section>
         <Typography variant="h6" sx={{ mb: 1 }}>
-          Nueva categorÃ­a
+          Nueva categoría
         </Typography>
         <Stack direction="row" spacing={1}>
           <TextField
@@ -838,10 +838,10 @@ function RecipeDialog({
             onChange={(e) => setName(e.target.value)}
           />
           <FormControl fullWidth size="small">
-            <InputLabel id="RecipeBack-category-label">CategorÃ­a</InputLabel>
+            <InputLabel id="RecipeBack-category-label">Categoría</InputLabel>
             <Select
               labelId="RecipeBack-category-label"
-              label="CategorÃ­a"
+              label="Categoría"
               value={categoryId}
               onChange={(e: SelectChangeEvent) => setCategoryId(e.target.value)}
             >
@@ -926,7 +926,7 @@ function RecipeDialog({
                   setIngredients((cur) => [...cur, { rowKey: Date.now(), name: "", qty: "", unit: "" }])
                 }
               >
-                AÃ±adir ingrediente
+                Añadir ingrediente
               </Button>
             </Stack>
           </Box>

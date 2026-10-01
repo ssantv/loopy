@@ -41,7 +41,7 @@ export default async function run(page, ui) {
     if (new URL(page.url()).pathname !== '/login') break
   }
 
-  // Con la cuenta bloqueada, la contraseÃ±a correcta tampoco debe dejar entrar.
+  // Con la cuenta bloqueada, la contraseña correcta tampoco debe dejar entrar.
   await page.fill('input[type=email]', EMAIL)
   await page.fill('input[type=password]', PASSWORD)
   await page.getByRole('button', { name: 'ENTRAR' }).click()
