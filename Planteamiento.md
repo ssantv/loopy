@@ -31,17 +31,25 @@ Documento de referencia del proyecto. Todo lo que hay aquí es el contrato de pr
 
 ### 2.1 Usuario, sesiones y push
 
-**`users`**
-- `id` uuid PK
-- `email` citext UNIQUE
-- `password_hash` (argon2id)
+**`users`** — un solo modelo para los dos perfiles, con `parent_id` como lo que los separa:
+- `id` PK
+- `email` UNIQUE **NULL en los niños**: es la identidad del adulto, y un menor no tiene email porque no puede recordarlo ni gestionarlo. El suyo es su `display_name` + `pin_hash`.
+- `password_hash` (argon2id) — **obligatorio en la columna**, pero en un niño es basura inutilizable (`secrets.token_urlsafe(48)` hasheado): nunca se autentica por contraseña, así que no hay ninguna que recuperar ni olvidar. El suyo es su `display_name` + `pin_hash`.
+- `pin_hash` (argon2id) — **NULL en los adultos**. El PIN se ve una sola vez al dar de alta la cuenta y **no se puede recuperar**.
 - `profile_type` `adult` | `child`
-- `display_name`
+- `display_name` — en el niño es su **clave de entrada**, y por eso no puede repetirse entre cuentas.
+- `parent_id` FK `CASCADE` — a qué adulto pertenece. `GET /auth/children` filtra por esto, no por perfil, para que un niño no vea los hijos de otro adulto aunque los dos sean `child`.
+- `course` — el curso del niño ("4º de Primaria"), solo contexto de la vista.
 - `timezone` IANA
-- `birth_date` (obligatorio al crear perfil de **niño**; adulto no lo usa)
+- `birth_date` — lo pone **el adulto** al dar de alta al niño. No va en el registro, porque el registro es solo de adultos y el tono de sus avisos no depende de su edad.
+- `study_max_minutes` (def 60) — el tope diario de estudio del niño.
 - `notification_tone` — solo niño: `jugueton` | `cercano` | `directo-amistoso` | `directo`
-- `tone_source` `auto` | `manual`
+- `tone_source` `auto` | `manual` — `auto` significa "sugerido por la edad", y se cambia solo cuando el adulto lo ajusta a mano.
 - `created_at`, `updated_at`
+
+**Alta de cuentas.** Solo existe una puerta de registro, y es de adultos (`POST /auth/register`). La de niño es `POST /auth/children` y **exige el token de un adulto**: nombre, PIN de 4 a 6 dígitos y fecha de nacimiento. Enviar `profile_type: "child"` al registro devuelve `422` con un mensaje que dice dónde crear al niño, en vez de un error de validación seco.
+
+**Entrada del niño** (`POST /auth/child-login`): coincide **nombre y PIN a la vez**, y solo entra si **exactamente una** cuenta valida. Si dos coincidieran en ambos, la entrada se bloquea entera en lugar de adivinar. Rate limit por `(nombre, IP)`.
 
 **`sessions`** — `id`, `user_id` FK, `token_hash`, `expires_at`, `created_at`, `last_seen_at`.
 
@@ -89,6 +97,15 @@ Documento de referencia del proyecto. Todo lo que hay aquí es el contrato de pr
 - `days_resumen` / `days_estudio` / `days_practica` / `days_repaso` (def 1) — **ahora son pesos relativos, no días literales**. Reparten las sesiones entre fases: `1,1,1,1` = a partes iguales, y un peso de 0 descarta la fase (**práctica** = ejercicios prácticos (listening en inglés, resolución de problemas en mates…); algunas asignaturas no la requieren). El reparto es exacto por resto mayor y, a igualdad, gana la fase más temprana.
 - **Resumen progresivo**: `resumen_total_pages` (def NULL, "¿cuántas hojas tiene el tema?") y `resumen_done_pages` (def 0).
 **Sin agrupación por categorías.**
+
+**El calendario escolar del niño** — sin esto el plan es una cuentas atrás ciega:
+
+- **`schedule_slots`** — `id`, `user_id`, `subject_id`, `day_of_week`. **No guarda horas**, solo qué días se toca cada asignatura, porque es lo único que hace falta para resolver *"el próximo día que tengo esta asignatura"*. Único por `(user_id, subject_id, day_of_week)`. `day_of_week` con la convención del proyecto: `0 = lunes … 6 = domingo`, igual que `date.weekday()`.
+- **`off_days`** — `start_on..end_on` + `label` opcional. Se guarda como intervalo porque casi siempre son varios días seguidos (un día suelto es `start_on == end_on`) y los rangos se pueden solapar: al consultar solo importa la unión.
+- **`homework_templates`** — `title`, `subject_id` (`SET NULL`), `est_minutes`, `sort`. Es solo un atajo para el alta rápida: al aplicarla, el frontend la manda a `/api/checkin/items` como cualquier otro deber, así que no ata a nada del motor de tareas.
+- **`users.study_max_minutes`** (def 60) — el tope diario de estudio del niño.
+
+**En `tasks`** — `assigned_on` es *el día en que le pusieron el deber* y `due_on` es *la fecha límite*. No son la misma fecha, y esa es la diferencia entre "me lo puesta hoy" y "es para mañana". `due_on` se resuelve por origen, saltando días sin cole: asignatura → próximo día de clase; plan de estudio → su fecha; extraescolar → la suya. `created_by` y `extracurricular_id` son `SET NULL`, porque perder el rastro del origen no debe borrar el deber.
 
 **`exams`** — `id`, `user_id`, `subject_id` FK, `exam_date`, `notes`, y `prep_minutes_override` (def NULL) — si este examen concreto necesita **más (o menos) tiempo que su asignatura**. Es el caso de un temazo puntual; solo afecta a ese examen, y se puede borrar con `null` explícito para volver al valor de la asignatura.
 
@@ -296,17 +313,35 @@ En reglas de calendario la marca previa **no consume** futuras; en intervalo **s
 
 ## 10. Roadmap
 
-1. **Scaffolding**: estructura de repo, Docker Compose, PWA (Vite) + FastAPI `/health`.
-2. **Auth**: usuarios (con `birth_date` en niño), sesiones, rate limit, reset. ✅
-3. **Motor de tareas**: `tasks`, recurrencias (daily/weekly/month_day/interval/rotación), "¿qué toca hoy?", completar → recalcular, hora opcional + `notify`.
-4. **Niño — colegio**: asignaturas, deberes, trabajos + sugerencias, exámenes + plan hacia atrás, extraescolares, `work_sessions` (temporizador + pomodoro).
-5. **Niño — check-in + tono**: alta rápida 3 tipos, plantillas por edad, `tone_source`.
-6. **Adulto**: puntuales (cosas de hoy), hogar por habitaciones (adelantadas), compra + Recomendar, resumen diario + excepciones.
-7. **Marcado masivo** en la principal (ambos perfiles) — antes era la pestaña "Pendientes", ahora fusionada.
-8. **Menú**: franjas, categorías + objetivos, recetas + ingredientes, planificador (copiar semana), añadir a compra, recomendar huecos.
-9. **Scheduler + push**: outbox, poller, pywebpush, suscripciones, retries.
-10. **Deploy VPS + pruebas reales**: Android Chrome, iOS Safari (pantalla de inicio), offline.
-11. **Pulido**: logs, `/health`, backups `pg_dump` + copia offsite.
+### Hecho
+
+Los pasos 1 a 9 del plan original están cerrados:
+
+1. **Scaffolding**: estructura de repo, Docker Compose, PWA (Vite) + FastAPI `/health`. ✅
+2. **Auth**: usuarios, sesiones, rate limit, reset. ✅
+3. **Motor de tareas**: `tasks`, recurrencias (daily/weekly/month_day/interval/rotación), "¿qué toca hoy?", completar → recalcular, hora opcional + `notify`. ✅
+4. **Niño — colegio**: asignaturas, deberes, trabajos + sugerencias, exámenes + plan hacia atrás, extraescolares, `work_sessions` (temporizador + pomodoro). ✅
+5. **Niño — check-in + tono**: alta rápida 3 tipos, plantillas por edad, `tone_source`. ✅
+6. **Adulto**: puntuales (cosas de hoy), hogar por habitaciones (adelantadas), compra + Recomendar, resumen diario + excepciones. ✅
+7. **Marcado masivo** en la principal (ambos perfiles). ✅
+8. **Menú**: franjas, categorías + objetivos, recetas + ingredientes, planificador (copiar semana), añadir a compra, recomendar huecos. ✅
+9. **Scheduler + push**: outbox, poller, pywebpush, suscripciones, retries. ✅
+
+Encima de ese base se hizo el **modelo familiar v2**, que es lo que cambió la forma de crear cuentas:
+
+- **Fase 1 — la cuenta del niño la crea un adulto.** El menor no se registra: nace de `POST /auth/children` con nombre + PIN (Argon2id, no recuperable) y entra por `/auth/child-login`. El login legado con email sigue funcionando para las cuentas que ya existían; lo que se cerró es crear nuevas así. Aislamiento por `user_id` y rate limit por `(nombre, IP)`.
+- **Fase 2a — contexto escolar.** `schedule_slots` (qué días se toca cada asignatura), `off_days` (vacaciones, puentes), `homework_templates`, `study_max_minutes` por niño, `assigned_on` / `created_by` / `extracurricular_id` en `tasks`.
+- **Fase 2b — la fecha límite se calcula.** `due_on` según el origen, saltando días sin cole; reparto del plan respetando el tope diario y desplazando solo hacia atrás, con `unplaced_study_minutes` para lo que no cabe.
+- **Fase 3 — entrada del niño y alta desde el adulto.** `/nino` en el frontend, `Casa → Familia` para dar de alta y ver a los menores, `GET /auth/children` solo para adultos.
+
+### Pendiente
+
+10. **Mi día**: la principal como pantalla única de decisión de la mañana, para los dos perfiles.
+11. **Temporizador y avisos inteligentes**: temporizador en primer plano, avisos con contexto y no ruido.
+12. **Organiza tu tarde** (adulto): encajar tareas de casa con comidas y extraescolares.
+13. **Calendario y offline**: navegación sin conexión y cola de escrituras.
+14. **Cierre**: pulido de logs, `/health`, backups `pg_dump` + copia offsite, pruebas reales en Android Chrome e iOS Safari.
+15. **Backlog posterior**: rachas, foto del deber, dictado, Google Calendar, modo profesor, multi-idioma.
 
 ---
 

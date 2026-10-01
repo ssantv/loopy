@@ -2,7 +2,9 @@
 
 App de organización personal multiusuario con **dos perfiles independientes por cuenta**: **Adulto** (recordatorios, hogar, compra, menú, resumen diario) y **Niño** (deberes, trabajos, exámenes con plan de estudio automático, check-in diario).
 
-> Fase actual: **pasos 7, 8 y 9** — marcado masivo de lo pendiente desde la propia principal; **Menú de comidas** adulto (franjas, categorías+objetivos, recetas+ingredientes, plan semanal con copiar/recomendar/añadir a compra); y **scheduler + push** (outbox, poller VAPID con reintentos, suscripción Web Push desde la PWA); sobre el módulo adulto (hogar, compra, resumen diario, menú) y el módulo niño (colegio + plan de estudio + check-in).
+> Estado actual: el **modelo familiar** está cerrado — la cuenta del niño la crea un adulto y entra con nombre y PIN —, y el **contexto escolar** está montado: horario semanal, días sin cole, plantillas de deber y reparto del plan de estudio saltando los días sin clase, con tope diario de estudio por niño.
+>
+> Lo siguiente en el roadmap: **Mi día** (la principal como pantalla única de decisión) → temporizador y avisos inteligentes → **Organiza tu tarde** (adulto) → calendario y offline → cierre.
 
 ## Navegación
 
@@ -26,6 +28,26 @@ Todo lo que el planificador necesita saber del niño está en **Colegio → Perf
 - **Excepciones por examen**: si un examen concreto se sale de la pauta (un temazo puntual), se le puede dar su propio tiempo sin tocar el resto de la asignatura. Se borra volviendo al valor general.
 
 > Nota: el campo de peso por fase (`1,1,1,1` por defecto) reparte las sesiones entre fases, y un `0` descarta esa fase — así es como se quita la práctica en una asignatura que no la tiene.
+
+## Contexto escolar
+
+El planificador necesita saber **cuándo se toca cada asignatura** y **cuándo no hay clase**. Eso se configura en **Colegio → Horario** y en **Colegio → Días sin cole**:
+
+- **Horario semanal**: qué días se tiene cada asignatura. No se guardan horas, solo qué días, porque es lo que hace falta para lo único que se calcula con él: **la fecha límite de un deber** ("el próximo día que tengo esta asignatura").
+- **Días sin cole**: rangos de vacaciones, puentes o semana de exámenes. Se pueden solapar; al consultar solo importa la unión.
+- **Plantillas de deber**: "Ficha de mates", "Leer 20 min", para el alta rápida del check-in.
+- **Tope diario de estudio**, en minutos, por niño.
+
+La convención de días es `0 = lunes … 6 = domingo` en todo el proyecto.
+
+Dos fechas distintas en un deber, que es lo que evita el clásico "me lo puso hoy, es para mañana":
+
+- **`assigned_on`** — el día en que le pusieron el deber. Lo pone el servidor.
+- **`due_on`** — la fecha límite. Si el deber viene de una asignatura, se calcula como el **próximo día de clase de esa asignatura**, saltando días sin cole. Si viene de un plan de estudio o de un extraescolar, manda su propia fecha.
+
+El reparto del plan de estudio **respeta el tope diario** y **nunca desplaza una sesión hacia delante**: si un día ya está lleno, la sesión cae hacia atrás, y lo que no cabe se devuelve como `unplaced_study_minutes` en vez de fingir que sí.
+
+Un deber nunca se borra por perder el rastro de quién lo creó o de qué extraescolar venía: `created_by` y `extracurricular_id` son `ON DELETE SET NULL`.
 
 ## Cuentas de niño
 
