@@ -11,8 +11,16 @@ import random
 import sys
 import urllib.error
 import urllib.request
+from datetime import date, timedelta
 
 BASE = "http://127.0.0.1:8000"
+
+# Fechas relativas al día en que se ejecuta: con fechas fijas el guion se
+# pudre solo en cuanto pasan (y "la tarea futura" deja de estarlo).
+HOY = date.today()
+# El domingo siguiente, en la convención del proyecto (0=lunes ... 6=domingo).
+DOMINGO = HOY + timedelta(days=(6 - HOY.weekday()) % 7 or 7)
+FUTURA = (HOY + timedelta(days=5)).isoformat()
 
 
 def call(method, path, body=None, token=None):
@@ -55,11 +63,11 @@ def main():
     st, t2 = call("POST", "/api/tasks", {
         "category": "hogar", "title": "Regar plantas",
         "rec_type": "weekly_days", "rec_week_mask": 64,  # domingos
-        "rec_anchor": "2026-09-27",
+        "rec_anchor": DOMINGO.isoformat(),
     }, token)
     assert st == 201, f"task recursiva: {st} {t2}"
     st, t3 = call("POST", "/api/tasks", {
-        "category": "puntual", "title": "Llamar al fontanero", "due_on": "2026-09-24",
+        "category": "puntual", "title": "Llamar al fontanero", "due_on": FUTURA,
     }, token)
     assert st == 201, f"task futura: {st} {t3}"
 
@@ -76,7 +84,7 @@ def main():
     assert st == 409, f"puntual con due_on hoy no tiene next: {st} {err}"
     st, adv = call("POST", f"/api/tasks/{t2['id']}/advance", {}, token)
     assert st == 200, f"advance: {st} {adv}"
-    assert adv["done_on"] == "2026-09-27", f"adelanta el domingo próximo: {adv}"
+    assert adv["done_on"] == DOMINGO.isoformat(), f"adelanta el domingo próximo: {adv}"
 
     # --- Compra: añadir, comprar, deshacer, recomendar ---
     st, it = call("POST", "/api/shopping", {"name": "Leche", "qty": "2 L"}, token)
@@ -96,12 +104,16 @@ def main():
     st, rec = call("GET", "/api/shopping/recommend", token=token)
     assert st == 200, f"recommend: {st} {rec}"
     assert any(r["name"].lower() == "pan" and r["count"] == 2 for r in rec), f"pan recomendado: {rec}"
-    # compra de niño bloqueada
-    st, kid = call("POST", "/api/auth/register", {
-        "email": email.replace("adult", "kid"),
-        "password": "secreto123", "profile_type": "child", "birth_date": "2016-01-01",
-    })
-    assert st == 201, f"register kid: {st} {kid}"
+    # compra de niño bloqueada (la cuenta la crea este adulto con un PIN)
+    # Nombre único por pasada: el nombre es la clave de entrada y con dos
+    # cuentas que la comparten el login se bloquea.
+    nombre_nino = f"NinoAdulto{random.randint(1000, 9999)}"
+    st, cab = call("POST", "/api/auth/children", {
+        "display_name": nombre_nino, "pin": "4821", "birth_date": "2016-01-01",
+    }, token)
+    assert st == 201, f"alta de niño: {st} {cab}"
+    st, kid = call("POST", "/api/auth/child-login", {"display_name": nombre_nino, "pin": "4821"})
+    assert st == 200, f"child-login: {st} {kid}"
     st, blocked = call("GET", "/api/shopping", token=kid["token"])
     assert st == 403, f"compra de niño debería ser 403: {st} {blocked}"
 
@@ -110,11 +122,13 @@ def main():
     assert st == 200 and conf["enabled"] and conf["time"] == "20:00:00", f"config defaults: {conf}"
     st, conf2 = call("PATCH", "/api/summary/config", {"time": "21:30"}, token)
     assert st == 200 and conf2["time"] == "21:30:00", f"patch config: {conf2}"
-    st, exc = call("PUT", "/api/summary/exceptions/2026-09-25", {"action": "skip"}, token)
+    dia_exc = HOY.isoformat()
+    mes = f"{HOY.year:04d}-{HOY.month:02d}"
+    st, exc = call("PUT", f"/api/summary/exceptions/{dia_exc}", {"action": "skip"}, token)
     assert st == 200 and exc["action"] == "skip", f"exception: {exc}"
-    st, mon = call("GET", "/api/summary?month=2026-09", token=token)
-    assert st == 200 and [d["date"] for d in mon["days"]] == ["2026-09-25"], f"mes: {mon}"
-    st, _ = call("DELETE", "/api/summary/exceptions/2026-09-25", {}, token)
+    st, mon = call("GET", f"/api/summary?month={mes}", token=token)
+    assert st == 200 and [d["date"] for d in mon["days"]] == [dia_exc], f"mes: {mon}"
+    st, _ = call("DELETE", f"/api/summary/exceptions/{dia_exc}", {}, token)
     assert st == 204, "borra excepción"
     st, blocked = call("GET", "/api/summary/config", token=kid["token"])
     assert st == 403, f"resumen de niño debería ser 403: {st} {blocked}"

@@ -6,11 +6,18 @@ from pydantic import BaseModel, EmailStr, Field
 
 
 class RegisterRequest(BaseModel):
+    """Alta de cuenta adulta.
+
+    No hay cumpleaños aquí: el del niño lo pone el adulto al dar de alta su
+    cuenta en `/children`, y el de un adulto no cambia nada (el tono de sus
+    avisos no depende de la edad). Se admite `child` en `profile_type` solo
+    para poder responder con un error claro en vez de un fallo de validación.
+    """
+
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     profile_type: str = Field(default="adult", pattern="^(adult|child)$")
     display_name: str | None = Field(default=None, max_length=80)
-    birth_date: datetime | None = Field(default=None, description="Obligatoria para perfil child")
     timezone: str = Field(default="UTC", max_length=64)
 
 

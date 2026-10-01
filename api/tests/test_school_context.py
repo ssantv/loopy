@@ -52,12 +52,41 @@ async def env():
 
 
 async def _authed(env, email="nino@test.com", profile_type="child") -> str:
-    cuerpo = {"email": email, "password": "s3cret123", "profile_type": profile_type}
+    """Deja el cliente autenticado como el usuario pedido.
+
+    El niño se da de alta por la vía real (un adulto lo crea con un PIN), no
+    por `/register`, que ya no acepta cuentas de niño.
+    """
     if profile_type == "child":
-        cuerpo["birth_date"] = "2015-01-01"
-    r = await env.client.post("/api/auth/register", json=cuerpo)
-    assert r.status_code in (200, 201), r.text
-    tok = r.json()["token"]
+        # El nombre del niño es su clave de entrada, así que tiene que ser
+        # distinto por usuario: si dos comparten nombre y PIN, la entrada se
+        # bloquea y el login devuelve 401.
+        nombre = f"Nino {email}"
+        adulto = await env.client.post(
+            "/api/auth/register",
+            json={"email": f"{email}-adulto", "password": "s3cret123", "profile_type": "adult"},
+        )
+        assert adulto.status_code in (200, 201), adulto.text
+        cab = await env.client.post(
+            "/api/auth/children",
+            json={
+                "display_name": nombre,
+                "pin": "4821",
+                "birth_date": "2015-01-01",
+                "timezone": "UTC",
+            },
+            headers={"Authorization": f"Bearer {adulto.json()['token']}"},
+        )
+        assert cab.status_code in (200, 201), cab.text
+        entrada = await env.client.post("/api/auth/child-login", json={"display_name": nombre, "pin": "4821"})
+        assert entrada.status_code == 200, entrada.text
+        tok = entrada.json()["token"]
+    else:
+        r = await env.client.post(
+            "/api/auth/register", json={"email": email, "password": "s3cret123", "profile_type": "adult"}
+        )
+        assert r.status_code in (200, 201), r.text
+        tok = r.json()["token"]
     env.client.headers["Authorization"] = f"Bearer {tok}"
     return tok
 

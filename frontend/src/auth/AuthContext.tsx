@@ -10,9 +10,7 @@ interface AuthContextValue {
   register: (payload: {
     email: string;
     password: string;
-    profile_type: string;
     timezone: string;
-    birth_date?: string;
   }) => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -47,13 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(res.user);
   };
 
-  const register = async (payload: {
-    email: string;
-    password: string;
-    profile_type: string;
-    timezone: string;
-    birth_date?: string;
-  }) => {
+  const register = async (payload: { email: string; password: string; timezone: string }) => {
     const res = await api.register(payload);
     setToken(res.token);
     setUser(res.user);

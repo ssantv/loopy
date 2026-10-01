@@ -1,21 +1,42 @@
 import { randomUUID } from "node:crypto";
 
+const APP = "http://localhost:5173";
 const API = "http://127.0.0.1:8000";
+
+/** Alta de la cuenta de niño por la vía real: un adulto la crea con un PIN. */
+async function crearNino(email, nombre) {
+  const cab = (t) => ({
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+  });
+  const adulto = await fetch(`${API}/api/auth/register`, {
+    ...cab(),
+    body: JSON.stringify({ email, password: "secreto123", profile_type: "adult" }),
+  }).then((r) => r.json());
+  await fetch(`${API}/api/auth/children`, {
+    ...cab(adulto.token),
+    body: JSON.stringify({ display_name: nombre, pin: "4821", birth_date: "2015-05-10" }),
+  });
+  return fetch(`${API}/api/auth/child-login`, {
+    ...cab(),
+    body: JSON.stringify({ display_name: nombre, pin: "4821" }),
+  }).then((r) => r.json());
+}
 
 export default async function run(page, ui) {
   const email = `qa_ui_${Date.now()}_${randomUUID().slice(0, 6)}@gmail.com`;
-  const results = {};
+  // Nombre único por pasada: con dos cuentas que comparten nombre y PIN el
+  // login del niño se bloquea.
+  const nombre = `Marte${randomUUID().slice(0, 6)}`;
+  const nino = await crearNino(email, nombre);
+  const results = { alta: nino?.user?.display_name ?? nino?.detail };
 
-  await page.goto("http://localhost:5173/registro", { waitUntil: "domcontentloaded" });
-
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Contraseña (mín. 8 caracteres)").fill("secreto123");
-  await page.getByLabel("Tipo de cuenta").click();
-  await page.getByRole("option", { name: "Niño" }).click();
-  await page.getByLabel("Fecha de nacimiento (para el tono)").fill("2015-05-10");
-  await page.getByRole("button", { name: "Crear cuenta" }).click();
-
-  await page.waitForURL((u) => u.pathname === "/", { timeout: 10000 });
+  // El niño entra por su puerta: nombre + PIN, sin email.
+  await page.goto(`${APP}/nino`, { waitUntil: "domcontentloaded" });
+  await page.getByLabel(/^¿Cómo te llamas\?/).fill(nombre);
+  await page.getByLabel(/^Tu PIN/).fill("4821");
+  await page.getByRole("button", { name: "Entrar" }).click();
+  await page.waitForURL((u) => u.pathname === "/", { timeout: 15000 });
   await page.getByText("Qué toca hoy", { exact: true }).waitFor({ timeout: 10000 });
   results.home = "ok";
   results.greeting = await page.locator("h4").innerText();

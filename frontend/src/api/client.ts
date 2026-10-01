@@ -62,13 +62,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  register: (payload: {
-    email: string;
-    password: string;
-    profile_type: string;
-    timezone: string;
-    birth_date?: string;
-  }) => request<AuthResponse>("/api/auth/register", { method: "POST", body: JSON.stringify(payload) }),
+  /** Alta de cuenta adulta. Las de niño las crea un adulto en `createChild`. */
+  register: (payload: { email: string; password: string; timezone: string }) =>
+    request<AuthResponse>("/api/auth/register", { method: "POST", body: JSON.stringify(payload) }),
   login: (payload: { email: string; password: string }) =>
     request<AuthResponse>("/api/auth/login", { method: "POST", body: JSON.stringify(payload) }),
   /** Entrada de los menores: nombre + PIN, sin email. */

@@ -308,9 +308,10 @@ async def test_login_correcto_por_pin_no_cuenta_como_fallo(env):
 # --------------------------------------------------------------------------
 
 
-async def test_birth_date_se_conserva_al_crear_por_registro(env):
-    # El registro clásico (email + contraseña) también guarda la fecha, que antes
-    # se aceptaba en el schema pero se perdía al crear el usuario.
+async def test_registrarse_como_nino_esta_cerrado(env):
+    # La cuenta de niño se crea desde la cuenta adulta, con un PIN. Dejar el
+    # registro abierto abriría una segunda puerta: un menor con email, sin
+    # familia y sin PIN, que el producto ya no reconoce.
     r = await env.client.post(
         "/api/auth/register",
         json={
@@ -321,10 +322,18 @@ async def test_birth_date_se_conserva_al_crear_por_registro(env):
             "birth_date": _birth_date_for_age(7),
         },
     )
-    assert r.status_code in (200, 201), r.text
-    user = r.json()["user"]
-    assert user["age"] == 7
-    assert user["notification_tone"] == "jugueton"
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert "PIN" in detail and "Familia" in detail  # dice dónde está ahora
+
+    # Ni aunque se finja que es adulto: la cuenta se crea normal, sin cumpleaños.
+    r_adulto = await env.client.post(
+        "/api/auth/register",
+        json={"email": "adulto_sin_cumple@test.com", "password": PASSWORD, "display_name": "Adulto"},
+    )
+    assert r_adulto.status_code in (200, 201), r_adulto.text
+    assert r_adulto.json()["user"]["profile_type"] == "adult"
+    assert r_adulto.json()["user"]["age"] is None
 
 
 async def test_cuenta_nino_no_tiene_email_tras_crearse(env):

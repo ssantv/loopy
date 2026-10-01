@@ -49,17 +49,26 @@ async def env():
 
 
 async def _register_and_login(env, email="kal@test.com") -> str:
-    r = await env.client.post(
+    """Sesión de niño por la vía real: un adulto lo crea con un PIN y entra.
+
+    El nombre es único por usuario a propósito: es la clave de entrada, y dos
+    cuentas con el mismo nombre y PIN dejan al niño sin poder entrar.
+    """
+    nombre = f"Kal {email}"
+    adulto = await env.client.post(
         "/api/auth/register",
-        json={
-            "email": email,
-            "password": "s3cret123",
-            "profile_type": "child",
-            "birth_date": "2015-01-01",
-        },
+        json={"email": f"{email}-adulto", "password": "s3cret123", "profile_type": "adult"},
     )
-    assert r.status_code in (200, 201), r.text
-    return r.json()["token"]
+    assert adulto.status_code in (200, 201), adulto.text
+    cab = await env.client.post(
+        "/api/auth/children",
+        json={"display_name": nombre, "pin": "4821", "birth_date": "2015-01-01", "timezone": "UTC"},
+        headers={"Authorization": f"Bearer {adulto.json()['token']}"},
+    )
+    assert cab.status_code in (200, 201), cab.text
+    entrada = await env.client.post("/api/auth/child-login", json={"display_name": nombre, "pin": "4821"})
+    assert entrada.status_code == 200, entrada.text
+    return entrada.json()["token"]
 
 
 async def _authed(env, email="kal@test.com") -> None:

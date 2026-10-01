@@ -29,18 +29,28 @@ def main():
     import random
 
     email = f"qa_checkin_{sys.platform.replace('-', '')}_{random.randint(0, 10**6)}@gmail.com"
+    # El nombre del niño es su clave de entrada: único por pasada, porque con
+    # dos cuentas que comparten nombre y PIN la entrada se bloquea.
+    nombre = f"Mini{random.randint(1000, 9999)}"
 
-    # 1) Niño nacido en 2015 -> ~11 años -> tono 'cercano' (tone_source auto)
-    st, reg = call("POST", "/api/auth/register", {
+    # 1) Niño nacido en 2015 -> ~11 años -> tono 'cercano' (tone_source auto).
+    #    La cuenta la crea un adulto con un PIN: no hay registro de niño.
+    st, adulto = call("POST", "/api/auth/register", {
         "email": email,
         "password": "secreto123",
-        "profile_type": "child",
-        "birth_date": "2015-05-10",
-        "display_name": "Mini",
+        "profile_type": "adult",
     })
-    assert st == 201, f"register: {st} {reg}"
-    assert reg["user"]["notification_tone"] == "cercano", f"tono inicial: {reg['user']}"
-    assert reg["user"]["tone_source"] == "auto", "tone_source debería ser auto"
+    assert st == 201, f"register adulto: {st} {adulto}"
+    st, cab = call("POST", "/api/auth/children", {
+        "display_name": nombre,
+        "pin": "4821",
+        "birth_date": "2015-05-10",
+    }, adulto["token"])
+    assert st == 201, f"alta de niño: {st} {cab}"
+    assert cab["notification_tone"] == "cercano", f"tono inicial: {cab}"
+    assert cab["tone_source"] == "auto", "tone_source debería ser auto"
+    st, reg = call("POST", "/api/auth/child-login", {"display_name": nombre, "pin": "4821"})
+    assert st == 200, f"child-login: {st} {reg}"
     token = reg["token"]
 
     # 2) Config por defecto (se crea al consultar)
@@ -79,7 +89,14 @@ def main():
     proyecto = quick["proyectos"][0]
     examen = quick["examenes"][0]
     assert deber["pending_from_class"] is True and deber["est_minutes"] == 25, deber
-    assert deber["due_on"] == quick["day"], f"deberes del día: {deber}"
+    # Desde la Fase 2b un deber de asignatura no vence "hoy": vence el próximo
+    # día de clase de esa asignatura, saltando los días sin cole. El día del
+    # check-in es cuándo te lo pusieron, no cuándo hay que entregarlo.
+    assert deber["due_on"] > quick["day"], f"el deber debería vencer después de ponerle: {deber}"
+    assert deber["due_from_rule"] == "próximo día de clase", deber
+    assert deber["assigned_on"] == quick["day"], deber
+    # El proyecto con fecha puesta a mano manda él: no lo recalcula.
+    assert proyecto["due_on"] == "2026-10-15", proyecto
     assert examen["subject_name"] == "Inglés", examen
 
     # 7) Los objetos quedan creados y visibles

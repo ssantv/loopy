@@ -4,6 +4,7 @@ Presupone la API corriendo en http://localhost:8000. Usa un email descartable
 (dominio .test lo rechaza el validador, así que usamos un email normal).
 """
 
+import random
 import sys
 from datetime import date, timedelta
 
@@ -28,19 +29,28 @@ def check(name: str, cond: bool, extra: str = "") -> None:
 def main() -> None:
     client = httpx.Client(base_url=BASE, timeout=10)
 
-    # ---- registro niño
+    # ---- alta de la cuenta de niño: la crea un adulto con un PIN.
+    # El nombre se sortea por pasada porque es la clave de entrada: con dos
+    # cuentas que comparten nombre y PIN el login se bloquea.
+    nombre_nino = f"NinoCole{random.randint(1000, 9999)}"
     r = client.post(
         "/api/auth/register",
+        json={"email": EMAIL, "password": PASSWORD, "profile_type": "adult", "display_name": "QA"},
+    )
+    check("registro adulto", r.status_code in (200, 201), f"status={r.status_code}")
+    r = client.post(
+        "/api/auth/children",
+        headers={"Authorization": f"Bearer {r.json()['token']}"},
         json={
-            "email": EMAIL,
-            "password": PASSWORD,
-            "profile_type": "child",
-            "display_name": "NiñoQA",
+            "display_name": nombre_nino,
+            "pin": "4821",
             "birth_date": "2018-01-15",
             "timezone": "America/Argentina/Buenos_Aires",
         },
     )
-    check("registro niño", r.status_code in (200, 201), f"status={r.status_code}")
+    check("alta de niño", r.status_code in (200, 201), f"status={r.status_code} {r.text}")
+    r = client.post("/api/auth/child-login", json={"display_name": nombre_nino, "pin": "4821"})
+    check("entrada del niño", r.status_code == 200, f"status={r.status_code} {r.text}")
     token = r.json()["token"]
     headers = {"Authorization": f"Bearer {token}"}
 

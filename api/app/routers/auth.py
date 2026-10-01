@@ -75,21 +75,26 @@ async def get_current_user(
 
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
 async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db)) -> AuthResponse:
+    # Las cuentas de niño no se registran: las crea un adulto con un PIN (ver
+    # /children). Dejarlas aquí abriría una segunda puerta que deja al menor
+    # sin familia, sin PIN y con un email que el producto ya no reconoce.
+    if payload.profile_type != "adult":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Esta cuenta es de niño: las crea un adulto con un PIN, no con un email. "
+                "Da de alta al niño desde Casa → Familia."
+            ),
+        )
     existing = (await db.execute(select(User).where(User.email == payload.email))).scalar_one_or_none()
     if existing is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ya existe una cuenta con este email")
-    # Niño: cumpleaños obligatorio al crear el perfil (para tono automático).
-    if payload.profile_type == "child" and payload.birth_date is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="El perfil de niño requiere fecha de nacimiento"
-        )
     user = User(
         email=payload.email,
         password_hash=hash_password(payload.password),
         profile_type=payload.profile_type,
         display_name=payload.display_name,
         timezone=payload.timezone,
-        birth_date=payload.birth_date,
     )
     # Tono inicial: si hay fecha de nacimiento (niño), se sugiere por edad.
     suggested = tone_for_age(user.age())

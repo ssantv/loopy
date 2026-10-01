@@ -23,6 +23,11 @@ import httpx
 API = "http://127.0.0.1:8000"
 DB = Path(__file__).resolve().parent.parent / "api" / "loopy_dev.db"
 
+# La consola de Windows va en cp1252 y no sabe imprimir las flechas "→" de los
+# mensajes: sin esto el guion revienta al informar, no al fallar.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 
 def ok(name: str, cond: bool, extra: str = "") -> None:
     print(f"  {'PASS' if cond else 'FAIL'}  {name}" + (f"  [{extra}]" if extra else ""))
@@ -154,9 +159,13 @@ async def main() -> None:
         r2 = await c.delete(f"/api/menu/recipes/{rec2['id']}", headers=h)
         ok("borrar recetas", r.status_code == 204 and r2.status_code == 204)
 
-        # ---- niño → 403 ----
-        regc = (await c.post("/api/auth/register", json={"email": child_email, "password": password, "profile_type": "child", "birth_date": "2015-01-01"})).json()
-        hc = {"Authorization": f"Bearer {regc['token']}"}
+        # ---- niño → 403 (cuenta creada por el adulto con un PIN) ----
+        # Nombre único: es la clave de entrada, y con dos cuentas iguales el
+        # login se bloquea (en la BD de dev se acumulan las pasadas).
+        nomc = f"NinoMenu{__import__('random').randint(1000, 9999)}"
+        cab = (await c.post("/api/auth/children", json={"display_name": nomc, "pin": "4821", "birth_date": "2015-01-01"}, headers=h)).json()
+        entc = (await c.post("/api/auth/child-login", json={"display_name": nomc, "pin": "4821"})).json()
+        hc = {"Authorization": f"Bearer {entc['token']}"}
         r = await c.get("/api/menu/slots", headers=hc)
         ok("perfil niño → 403", r.status_code == 403)
 
