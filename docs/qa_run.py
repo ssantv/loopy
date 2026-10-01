@@ -28,11 +28,44 @@ from pathlib import Path
 
 DB = Path(__file__).resolve().parents[1] / "api" / "loopy_dev.db"
 
+# La salida de los guiones de navegador trae flechas "→" y la consola de
+# Windows va en cp1252: sin esto, el envoltorio revienta al copiarla.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 
 def abrir() -> sqlite3.Connection:
     con = sqlite3.connect(DB, timeout=30)
     con.execute("PRAGMA foreign_keys = ON")
     return con
+
+
+# El runner del navegador no falla con código de salida cuando el guion revienta
+# dentro de la página: lo deja escrito como texto y sale con 0. Sin esto, un QA
+# roto se cuela como verde.
+FALLOS = ("SCRIPT ERROR", "SNAPSHOT ERROR", "EVAL ERROR")
+
+
+def run(argv: list[str]) -> int:
+    proc = subprocess.Popen(
+        argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert proc.stdout is not None
+    caido = False
+    for linea in proc.stdout:
+        if any(m in linea for m in FALLOS):
+            caido = True
+        print(linea, end="")
+    codigo = proc.wait()
+    if caido and codigo == 0:
+        print("qa-run: el guion fallo dentro de la pagina (arriba).")
+        return 1
+    return codigo
 
 
 def main(argv: list[str]) -> int:
@@ -54,7 +87,7 @@ def main(argv: list[str]) -> int:
 
     codigo = 1
     try:
-        codigo = subprocess.call(argv)
+        codigo = run(argv)
     finally:
         con = abrir()
         creadas = con.execute(
