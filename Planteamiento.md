@@ -333,15 +333,15 @@ Encima de ese base se hizo el **modelo familiar v2**, que es lo que cambió la f
 - **Fase 2a — contexto escolar.** `schedule_slots` (qué días se toca cada asignatura), `off_days` (vacaciones, puentes), `homework_templates`, `study_max_minutes` por niño, `assigned_on` / `created_by` / `extracurricular_id` en `tasks`.
 - **Fase 2b — la fecha límite se calcula.** `due_on` según el origen, saltando días sin cole; reparto del plan respetando el tope diario y desplazando solo hacia atrás, con `unplaced_study_minutes` para lo que no cabe.
 - **Fase 3 — entrada del niño y alta desde el adulto.** `/nino` en el frontend, `Casa → Familia` para dar de alta y ver a los menores, `GET /auth/children` solo para adultos.
+- **Fase 10 — Mi día (foco del ahora).** La principal abre con un bloque destacado con **la única cosa que toca ahora** —la primera de hoy y, si no hay nada hoy, la atrasada más antigua— y un botón para marcarla; en el niño el estudio de un examen cuenta como cosa de hoy. La lista completa, los exámenes y los deberes siguen debajo como apoyo. Al marcarla, el foco pasa solo a la siguiente.
 
 ### Pendiente
 
-10. **Mi día**: la principal como pantalla única de decisión de la mañana, para los dos perfiles.
-11. **Temporizador y avisos inteligentes**: temporizador en primer plano, avisos con contexto y no ruido.
-12. **Organiza tu tarde** (adulto): encajar tareas de casa con comidas y extraescolares.
-13. **Calendario y offline**: navegación sin conexión y cola de escrituras.
-14. **Cierre**: pulido de logs, `/health`, backups `pg_dump` + copia offsite, pruebas reales en Android Chrome e iOS Safari.
-15. **Backlog posterior**: rachas, foto del deber, dictado, Google Calendar, modo profesor, multi-idioma.
+10. **Temporizador y avisos inteligentes**: temporizador en primer plano, avisos con contexto y no ruido.
+11. **Organiza tu tarde** (adulto): encajar tareas de casa con comidas y extraescolares.
+12. **Calendario y offline**: navegación sin conexión y cola de escrituras.
+13. **Cierre**: pulido de logs, `/health`, backups `pg_dump` + copia offsite, pruebas reales en Android Chrome e iOS Safari.
+14. **Backlog posterior**: rachas, foto del deber, dictado, Google Calendar, modo profesor, multi-idioma.
 
 ---
 

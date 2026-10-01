@@ -28,11 +28,12 @@ import Alert from "@mui/material/Alert";
 import CircularProgress from "@mui/material/CircularProgress";
 import Stack from "@mui/material/Stack";
 import Divider from "@mui/material/Divider";
+import Paper from "@mui/material/Paper";
 import Dialog from "@mui/material/Dialog";
 import DialogTitle from "@mui/material/DialogTitle";
 import DialogContent from "@mui/material/DialogContent";
 import DialogActions from "@mui/material/DialogActions";
-import type { SxProps } from "@mui/material/styles";
+import { alpha, type SxProps } from "@mui/material/styles";
 
 const CATEGORY_LABEL: Record<string, string> = {
   general: "General",
@@ -99,6 +100,12 @@ function countdownLabel(targetISO: string, today: string, noun: string): string 
 }
 
 const SCHOOL_CATEGORIES = ["colegio-deberes", "colegio-trabajo"];
+
+// La cosa con la que empezar la mañana. O una tarea o una sesión del plan de
+// estudio de un examen (que se marca aparte, en study_completions).
+type Focus =
+  | { kind: "task"; task: Task; overdue: boolean }
+  | { kind: "plan"; item: PlanItem; subject: string; examId: number };
 
 function toTaskState(task: Task, today: string): "hoy" | "hecho" | "atrasada" | "adelantada" | null {
   if (task.done.includes(today)) return "hecho";
@@ -200,6 +207,23 @@ export default function Home() {
       .slice(0, 4);
   }, [exams, today]);
 
+  // Foco del ahora: primero lo de hoy (tareas en su orden, luego el estudio de
+  // exámenes); si no hay nada hoy, la atrasada más antigua. Así la mañana
+  // empieza con una sola decisión y el resto queda debajo como apoyo.
+  const focus = useMemo<Focus | null>(() => {
+    if (groups.hoy.length > 0) return { kind: "task", task: groups.hoy[0], overdue: false };
+    if (examPlanItems.length > 0) {
+      const { item, subject, examId } = examPlanItems[0];
+      return { kind: "plan", item, subject, examId };
+    }
+    const oldest = [...groups.atrasadas].sort(
+      (a, b) =>
+        (a.due_on ?? a.pending ?? "9999").localeCompare(b.due_on ?? b.pending ?? "9999") ||
+        a.sort - b.sort,
+    )[0];
+    return oldest ? { kind: "task", task: oldest, overdue: true } : null;
+  }, [groups, examPlanItems]);
+
   const toggle = useCallback(
     async (task: Task, doneOn: string) => {
       const isDone = task.done.includes(doneOn);
@@ -293,6 +317,17 @@ export default function Home() {
           </Box>
         ) : (
           <Stack spacing={3}>
+            {focus && (
+              <FocusCard
+                focus={focus}
+                today={today}
+                onToggleTask={toggle}
+                onTogglePlan={togglePlan}
+                restToday={groups.hoy.length + examPlanItems.length - 1}
+                overdueCount={groups.atrasadas.length}
+              />
+            )}
+
             <section>
               <Typography variant="h6" sx={{ mb: 1 }}>
                 Qué toca hoy
@@ -555,6 +590,87 @@ function SessionDialog({
         <Button onClick={onClose}>Cerrar</Button>
       </DialogActions>
     </Dialog>
+  );
+}
+
+function FocusCard({
+  focus,
+  today,
+  onToggleTask,
+  onTogglePlan,
+  restToday,
+  overdueCount,
+}: {
+  focus: Focus;
+  today: string;
+  onToggleTask: (task: Task, doneOn: string) => Promise<void>;
+  onTogglePlan: (examId: number, item: PlanItem) => Promise<void>;
+  restToday: number;
+  overdueCount: number;
+}) {
+  const isPlan = focus.kind === "plan";
+  const label = isPlan
+    ? focus.item.label ?? PHASE_LABEL[focus.item.phase] ?? focus.item.phase
+    : CATEGORY_LABEL[focus.task.category] ?? focus.task.category;
+  const color = isPlan
+    ? PHASE_COLOR[focus.item.phase] ?? "#757575"
+    : CATEGORY_COLOR[focus.task.category] ?? "#757575";
+  const title = isPlan ? focus.subject : focus.task.title;
+  const minutes = isPlan ? focus.item.minutes : focus.task.est_minutes;
+  const overdue = focus.kind === "task" && focus.overdue;
+
+  const onDone = () => {
+    if (focus.kind === "plan") {
+      void onTogglePlan(focus.examId, focus.item);
+      return;
+    }
+    const doneOn =
+      focus.task.due_on && !focus.task.rec_type ? focus.task.due_on : focus.task.pending ?? today;
+    void onToggleTask(focus.task, doneOn);
+  };
+
+  const rest: string[] = [];
+  if (restToday > 0) rest.push(`+${restToday} más para hoy`);
+  if (overdueCount > 0) rest.push(`${overdueCount} atrasada${overdueCount === 1 ? "" : "s"}`);
+
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        p: 2,
+        borderRadius: 3,
+        border: 1,
+        borderColor: "primary.main",
+        bgcolor: (t) => alpha(t.palette.primary.main, 0.06),
+      }}
+    >
+      <Typography variant="overline" sx={{ color: "primary.main", fontWeight: 700, lineHeight: 1.2 }}>
+        Ahora
+      </Typography>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", mt: 0.5 }}>
+        <Chip label={label} size="small" sx={{ bgcolor: color, color: "#fff", height: 20 }} />
+        <Typography variant="h6" sx={{ fontWeight: 600, flexGrow: 1 }}>
+          {title}
+        </Typography>
+      </Box>
+      {minutes ? (
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+          ~{minutes} min
+        </Typography>
+      ) : null}
+      <Button variant="contained" fullWidth sx={{ mt: 1.5, borderRadius: 2 }} onClick={onDone}>
+        {overdue ? "Ya lo he hecho" : "Hecho"}
+      </Button>
+      {rest.length > 0 && (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: "block", mt: 1, textAlign: "center" }}
+        >
+          {rest.join(" · ")}
+        </Typography>
+      )}
+    </Paper>
   );
 }
 
