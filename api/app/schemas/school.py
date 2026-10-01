@@ -219,6 +219,16 @@ class WorkSessionOut(BaseModel):
     created_at: datetime
 
 
+class WorkSessionEstimateOut(BaseModel):
+    """Corrección de una estimación a partir del historial real del temporizador."""
+
+    suggested_minutes: int | None
+    samples: int
+    based_on: str
+    planned_minutes: int
+    actual_minutes: int
+
+
 # ---------------------------------------------------------------- check-in
 
 

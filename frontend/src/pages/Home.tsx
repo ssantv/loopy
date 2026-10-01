@@ -13,6 +13,7 @@ import {
   type PlanItem,
   type PlanPhase,
   type Subject,
+  type WorkSessionEstimate,
 } from "../api/client";
 import Typography from "@mui/material/Typography";
 import Box from "@mui/material/Box";
@@ -162,6 +163,8 @@ export default function Home() {
   const [hechoOpen, setHechoOpen] = useState(false);
   const [sessionOpen, setSessionOpen] = useState(false);
   const [timerTarget, setTimerTarget] = useState<TimerTarget | null>(null);
+  const [estimacion, setEstimacion] = useState<WorkSessionEstimate | null>(null);
+  const [ajustando, setAjustando] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkMsg, setBulkMsg] = useState<string | null>(null);
 
@@ -331,6 +334,53 @@ export default function Home() {
     });
   }, []);
 
+  // El backend solo propone algo cuando hay historial de sobra y la diferencia
+  // merece mención; si no, `suggested_minutes` es null y aquí no se pinta nada.
+  const claveFoco = focus
+    ? focus.kind === "plan"
+      ? `plan:${focus.examId}:${focus.item.date}:${focus.item.offset}`
+      : `task:${focus.task.id}`
+    : "";
+  useEffect(() => {
+    if (!focus) {
+      setEstimacion(null);
+      return;
+    }
+    let vivo = true;
+    setEstimacion(null);
+    void workSessionApi
+      .estimate(
+        focus.kind === "plan"
+          ? { kind: "study", planned_minutes: focus.item.minutes }
+          : { kind: kindDeCategoria(focus.task.category), task_id: focus.task.id },
+      )
+      .then((est) => {
+        if (vivo) setEstimacion(est);
+      })
+      // Un fallo aquí es cosmético: la tarjeta se queda como estaba.
+      .catch(() => {
+        if (vivo) setEstimacion(null);
+      });
+    return () => {
+      vivo = false;
+    };
+  }, [claveFoco, focus]);
+
+  const aplicarEstimacion = useCallback(async () => {
+    const minutos = estimacion?.suggested_minutes;
+    if (!focus || focus.kind !== "task" || !minutos) return;
+    setAjustando(true);
+    try {
+      const updated = await taskApi.update(focus.task.id, { est_minutes: minutos });
+      setTasks((ts) => ts.map((t) => (t.id === updated.id ? updated : t)));
+      setEstimacion(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo ajustar la estimación");
+    } finally {
+      setAjustando(false);
+    }
+  }, [estimacion, focus]);
+
   // La sesión se guarda siempre (es trabajo real, haya marcado o no), pero un
   // fallo al guardarla no puede tragarse el "hecho": la tarea queda marcada igual.
   const cerrarTemporizador = useCallback(
@@ -388,15 +438,18 @@ export default function Home() {
         ) : (
           <Stack spacing={3}>
             {focus && (
-              <FocusCard
-                focus={focus}
-                today={today}
-                onToggleTask={toggle}
-                onTogglePlan={togglePlan}
-                onStart={abrirTemporizador}
-                restToday={groups.hoy.length + examPlanItems.length - 1}
-                overdueCount={groups.atrasadas.length}
-              />
+          <FocusCard
+            focus={focus}
+            today={today}
+            onToggleTask={toggle}
+            onTogglePlan={togglePlan}
+            onStart={abrirTemporizador}
+            onAjustar={() => void aplicarEstimacion()}
+            estimacion={estimacion}
+            ajustando={ajustando}
+            restToday={groups.hoy.length + examPlanItems.length - 1}
+            overdueCount={groups.atrasadas.length}
+          />
             )}
 
             <section>
@@ -676,6 +729,9 @@ function FocusCard({
   onToggleTask,
   onTogglePlan,
   onStart,
+  onAjustar,
+  estimacion,
+  ajustando,
   restToday,
   overdueCount,
 }: {
@@ -684,6 +740,9 @@ function FocusCard({
   onToggleTask: (task: Task, doneOn: string) => Promise<void>;
   onTogglePlan: (examId: number, item: PlanItem) => Promise<void>;
   onStart: (focus: Focus) => void;
+  onAjustar: () => void;
+  estimacion: WorkSessionEstimate | null;
+  ajustando: boolean;
   restToday: number;
   overdueCount: number;
 }) {
@@ -697,6 +756,15 @@ function FocusCard({
   const title = isPlan ? focus.subject : focus.task.title;
   const minutes = isPlan ? focus.item.minutes : focus.task.est_minutes;
   const overdue = focus.kind === "task" && focus.overdue;
+
+  // Solo hay texto cuando el backend ya ha decidido que merece mención.
+  const sugerenciaMin = estimacion?.suggested_minutes ?? null;
+  const referencia = minutes ?? MIN_POR_DEFECTO;
+  const sugerencia = sugerenciaMin
+    ? estimacion?.based_on === "task"
+      ? `Te suele llevar ${sugerenciaMin} min, no ${referencia}.`
+      : `Este tipo de tarea te suele llevar ${sugerenciaMin} min.`
+    : null;
 
   const onDone = () => {
     if (focus.kind === "plan") {
@@ -736,6 +804,18 @@ function FocusCard({
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
           ~{minutes} min
         </Typography>
+      ) : null}
+      {sugerencia ? (
+        <Box sx={{ mt: 0.75 }}>
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+            {sugerencia}
+          </Typography>
+          {focus.kind === "task" ? (
+            <Button size="small" onClick={onAjustar} disabled={ajustando} sx={{ mt: 0.25, px: 0.5 }}>
+              Ajustar a {estimacion?.suggested_minutes} min
+            </Button>
+          ) : null}
+        </Box>
       ) : null}
       <Stack direction="row" spacing={1} sx={{ mt: 1.5 }}>
         <Button

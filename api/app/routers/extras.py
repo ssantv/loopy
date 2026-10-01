@@ -2,12 +2,12 @@
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
-from app.models import Extracurricular, WorkSession
+from app.models import Extracurricular, Task, WorkSession
 from app.models.user import User
 from app.routers.auth import get_current_user
 from app.schemas.school import (
@@ -15,8 +15,10 @@ from app.schemas.school import (
     ExtracurricularOut,
     ExtracurricularUpdate,
     WorkSessionCreate,
+    WorkSessionEstimateOut,
     WorkSessionOut,
 )
+from app.services.estimates import suggest_estimate
 
 router = APIRouter(prefix="/api", tags=["colegio"])
 
@@ -114,3 +116,36 @@ async def list_work_sessions(
         select(WorkSession).where(WorkSession.user_id == user.id).order_by(WorkSession.created_at.desc()).limit(100)
     )
     return [WorkSessionOut(**s.__dict__) for s in rows.scalars().all()]
+
+
+@router.get("/work-sessions/estimate", response_model=WorkSessionEstimateOut)
+async def work_session_estimate(
+    kind: str | None = Query(default=None, pattern="^(task|homework|study|project)$"),
+    task_id: int | None = None,
+    planned_minutes: int | None = Query(default=None, ge=0),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> WorkSessionEstimateOut:
+    """Qué suele costar de verdad, según lo registrado por el temporizador.
+
+    Con `task_id` se usa el historial de esa tarea (y su `est_minutes` como
+    referencia); sin él, el del tipo de trabajo. `planned_minutes` solo hace falta
+    para items que no son tareas (una sesión de estudio), donde la estimación la
+    calcula el plan y no el usuario.
+    """
+    actual = planned_minutes
+    if task_id is not None:
+        task = (
+            await db.execute(select(Task).where(Task.id == task_id, Task.user_id == user.id))
+        ).scalar_one_or_none()
+        if task is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada")
+        actual = task.est_minutes
+    est = await suggest_estimate(db, user, kind=kind, task_id=task_id, current_minutes=actual)
+    return WorkSessionEstimateOut(
+        suggested_minutes=est.suggested_minutes,
+        samples=est.samples,
+        based_on=est.based_on,
+        planned_minutes=est.planned_minutes,
+        actual_minutes=est.actual_minutes,
+    )

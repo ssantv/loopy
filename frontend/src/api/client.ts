@@ -485,10 +485,24 @@ export const extracurricularApi = {
   remove: (id: number) => request<void>(`/api/extracurriculars/${id}`, { method: "DELETE" }),
 };
 
+export interface WorkSessionEstimate {
+  suggested_minutes: number | null;
+  samples: number;
+  based_on: string;
+  planned_minutes: number;
+  actual_minutes: number;
+}
+
 export const workSessionApi = {
   create: (payload: Omit<WorkSession, "id" | "created_at">) =>
     request<WorkSession>("/api/work-sessions", { method: "POST", body: JSON.stringify(payload) }),
   list: () => request<WorkSession[]>("/api/work-sessions"),
+  estimate: (params: { kind: string; task_id?: number; planned_minutes?: number }) => {
+    const q = new URLSearchParams({ kind: params.kind });
+    if (params.task_id !== undefined) q.set("task_id", String(params.task_id));
+    if (params.planned_minutes !== undefined) q.set("planned_minutes", String(params.planned_minutes));
+    return request<WorkSessionEstimate>(`/api/work-sessions/estimate?${q.toString()}`);
+  },
 };
 
 // ---------------------------------------------------------------- check-in
