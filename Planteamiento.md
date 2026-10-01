@@ -166,7 +166,7 @@ Una asignatura de 20 minutos con sesiones de 30 no desaparece: `ceil(20/30) = 1`
 
 **`checkin_configs`** — `id`, `user_id`, `enabled`, `time`, `week_mask`.
 
-**`work_sessions`** — `id`, `user_id`, `kind` (`homework`|`study`|`project`), `task_id` NULL, `planned_seconds`, `actual_seconds`, `completed_at`. Lo registran el **temporizador de deberes** (cuenta atrás con `est_minutes`) y el **pomodoro de estudio** (25 min / 5 min configurable). Compara real vs estimado y suma `done_minutes` a proyectos.
+**`work_sessions`** — `id`, `user_id`, `kind` (`task`|`homework`|`study`|`project`), `task_id` NULL, `planned_seconds`, `actual_seconds`, `completed_at`. Los registra el **temporizador** (cuenta atrás desde el estimate, con 25 min por defecto) y el **pomodoro de estudio** (25 min / 5 min configurable). Compara real vs estimado y suma `done_minutes` a proyectos.
 
 ### 2.5 Módulos adulto
 
@@ -334,10 +334,11 @@ Encima de ese base se hizo el **modelo familiar v2**, que es lo que cambió la f
 - **Fase 2b — la fecha límite se calcula.** `due_on` según el origen, saltando días sin cole; reparto del plan respetando el tope diario y desplazando solo hacia atrás, con `unplaced_study_minutes` para lo que no cabe.
 - **Fase 3 — entrada del niño y alta desde el adulto.** `/nino` en el frontend, `Casa → Familia` para dar de alta y ver a los menores, `GET /auth/children` solo para adultos.
 - **Fase 10 — Mi día (foco del ahora).** La principal abre con un bloque destacado con **la única cosa que toca ahora** —la primera de hoy y, si no hay nada hoy, la atrasada más antigua— y un botón para marcarla; en el niño el estudio de un examen cuenta como cosa de hoy. La lista completa, los exámenes y los deberes siguen debajo como apoyo. Al marcarla, el foco pasa solo a la siguiente.
+- **Fase 11 — temporizador en el foco.** El bloque "Ahora" ofrece **Empezar** además de **Hecho**. La cuenta atrás arranca del tiempo que la app ya conoce (`est_minutes` del deber, minutos del plan de estudio) y cae a 25 min cuando no hay estimate. Al terminar se puede **marcar o no** la tarea, y queda registrado en `work_sessions` el **real** junto al planificado, que es lo que permite comparar "creía que eran 20 minutos" con la realidad. Cerrar el diálogo sin terminar **no** registra nada: el temporizador sirve para concentrarse, no para fabricar minutos.
 
 ### Pendiente
 
-10. **Temporizador y avisos inteligentes**: temporizador en primer plano, avisos con contexto y no ruido.
+10. **Avisos inteligentes**: avisos con contexto y sin ruido, apoyándose en las `work_sessions` que ya guarda el temporizador (sobreestimar de forma sistemática es una señal fiable).
 11. **Organiza tu tarde** (adulto): encajar tareas de casa con comidas y extraescolares.
 12. **Calendario y offline**: navegación sin conexión y cola de escrituras.
 13. **Cierre**: pulido de logs, `/health`, backups `pg_dump` + copia offsite, pruebas reales en Android Chrome e iOS Safari.

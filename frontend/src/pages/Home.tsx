@@ -4,6 +4,7 @@ import {
   taskApi,
   pendingApi,
   pushApi,
+  workSessionApi,
   urlBase64ToUint8Array,
   subjectApi,
   type Exam,
@@ -26,6 +27,7 @@ import Chip from "@mui/material/Chip";
 import Collapse from "@mui/material/Collapse";
 import Alert from "@mui/material/Alert";
 import CircularProgress from "@mui/material/CircularProgress";
+import IconButton from "@mui/material/IconButton";
 import Stack from "@mui/material/Stack";
 import Divider from "@mui/material/Divider";
 import Paper from "@mui/material/Paper";
@@ -34,6 +36,8 @@ import DialogTitle from "@mui/material/DialogTitle";
 import DialogContent from "@mui/material/DialogContent";
 import DialogActions from "@mui/material/DialogActions";
 import { alpha, type SxProps } from "@mui/material/styles";
+import CloseIcon from "@mui/icons-material/Close";
+import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 
 const CATEGORY_LABEL: Record<string, string> = {
   general: "General",
@@ -107,6 +111,28 @@ type Focus =
   | { kind: "task"; task: Task; overdue: boolean }
   | { kind: "plan"; item: PlanItem; subject: string; examId: number };
 
+// Lo que cronometra el temporizador. `kind` habla el vocabulario de
+// work_sessions: deberes, estudio, trabajo o una tarea cualquiera.
+type TimerTarget = {
+  focus: Focus;
+  title: string;
+  minutos: number;
+  kind: string;
+  taskId: number | null;
+};
+
+const MIN_POR_DEFECTO = 25;
+
+function kindDeCategoria(categoria: string): string {
+  if (categoria === "colegio-deberes") return "homework";
+  if (categoria === "colegio-trabajo") return "project";
+  return "task";
+}
+
+function mmss(segundos: number): string {
+  return `${Math.floor(segundos / 60)}:${String(segundos % 60).padStart(2, "0")}`;
+}
+
 function toTaskState(task: Task, today: string): "hoy" | "hecho" | "atrasada" | "adelantada" | null {
   if (task.done.includes(today)) return "hecho";
   if (task.due_on && !task.rec_type) {
@@ -135,6 +161,7 @@ export default function Home() {
   const [adelantadasOpen, setAdelantadasOpen] = useState(false);
   const [hechoOpen, setHechoOpen] = useState(false);
   const [sessionOpen, setSessionOpen] = useState(false);
+  const [timerTarget, setTimerTarget] = useState<TimerTarget | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkMsg, setBulkMsg] = useState<string | null>(null);
 
@@ -291,6 +318,49 @@ export default function Home() {
     }
   }, [groups.hoy, load]);
 
+  const abrirTemporizador = useCallback((focus: Focus) => {
+    setTimerTarget({
+      focus,
+      title:
+        focus.kind === "plan"
+          ? `${focus.subject} · ${focus.item.label ?? PHASE_LABEL[focus.item.phase] ?? focus.item.phase}`
+          : focus.task.title,
+      minutos: focus.kind === "plan" ? focus.item.minutes : focus.task.est_minutes ?? 0,
+      kind: focus.kind === "plan" ? "study" : kindDeCategoria(focus.task.category),
+      taskId: focus.kind === "task" ? focus.task.id : null,
+    });
+  }, []);
+
+  // La sesión se guarda siempre (es trabajo real, haya marcado o no), pero un
+  // fallo al guardarla no puede tragarse el "hecho": la tarea queda marcada igual.
+  const cerrarTemporizador = useCallback(
+    async (plan: number, real: number, marcar: boolean) => {
+      const t = timerTarget;
+      setTimerTarget(null);
+      if (!t) return;
+      try {
+        await workSessionApi.create({
+          kind: t.kind,
+          task_id: t.taskId,
+          planned_seconds: plan,
+          actual_seconds: real,
+          completed_at: null,
+        });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "No se pudo guardar la sesión");
+      }
+      if (!marcar) return;
+      const f = t.focus;
+      if (f.kind === "plan") {
+        await togglePlan(f.examId, f.item);
+      } else {
+        const doneOn = f.task.due_on && !f.task.rec_type ? f.task.due_on : f.task.pending ?? today;
+        await toggle(f.task, doneOn);
+      }
+    },
+    [timerTarget, toggle, togglePlan, today],
+  );
+
   const listItemSx: SxProps = { borderRadius: 2 };
 
   return (
@@ -323,6 +393,7 @@ export default function Home() {
                 today={today}
                 onToggleTask={toggle}
                 onTogglePlan={togglePlan}
+                onStart={abrirTemporizador}
                 restToday={groups.hoy.length + examPlanItems.length - 1}
                 overdueCount={groups.atrasadas.length}
               />
@@ -530,6 +601,12 @@ export default function Home() {
         onClose={() => setSessionOpen(false)}
         onAdd={(subjectId, phase) => void addSession(subjectId, phase)}
       />
+
+      <TimerDialog
+        target={timerTarget}
+        onClose={() => setTimerTarget(null)}
+        onFinish={(plan, real, marcar) => void cerrarTemporizador(plan, real, marcar)}
+      />
     </Box>
   );
 }
@@ -598,6 +675,7 @@ function FocusCard({
   today,
   onToggleTask,
   onTogglePlan,
+  onStart,
   restToday,
   overdueCount,
 }: {
@@ -605,6 +683,7 @@ function FocusCard({
   today: string;
   onToggleTask: (task: Task, doneOn: string) => Promise<void>;
   onTogglePlan: (examId: number, item: PlanItem) => Promise<void>;
+  onStart: (focus: Focus) => void;
   restToday: number;
   overdueCount: number;
 }) {
@@ -658,9 +737,20 @@ function FocusCard({
           ~{minutes} min
         </Typography>
       ) : null}
-      <Button variant="contained" fullWidth sx={{ mt: 1.5, borderRadius: 2 }} onClick={onDone}>
-        {overdue ? "Ya lo he hecho" : "Hecho"}
-      </Button>
+      <Stack direction="row" spacing={1} sx={{ mt: 1.5 }}>
+        <Button
+          variant="contained"
+          fullWidth
+          startIcon={<PlayArrowIcon />}
+          onClick={() => onStart(focus)}
+          sx={{ borderRadius: 2 }}
+        >
+          Empezar
+        </Button>
+        <Button variant="outlined" onClick={onDone} sx={{ borderRadius: 2, flexShrink: 0 }}>
+          {overdue ? "Ya está hecho" : "Hecho"}
+        </Button>
+      </Stack>
       {rest.length > 0 && (
         <Typography
           variant="caption"
@@ -671,6 +761,149 @@ function FocusCard({
         </Typography>
       )}
     </Paper>
+  );
+}
+
+function TimerDialog({
+  target,
+  onClose,
+  onFinish,
+}: {
+  target: TimerTarget | null;
+  onClose: () => void;
+  onFinish: (plan: number, real: number, marcar: boolean) => void;
+}) {
+  const [plan, setPlan] = useState(0);
+  const [restante, setRestante] = useState(0);
+  const [corriendo, setCorriendo] = useState(false);
+  const [agotado, setAgotado] = useState(false);
+  const [guardando, setGuardando] = useState(false);
+
+  // Cada objetivo nuevo reinicia la cuenta; si la tarea no dice cuánto cuesta,
+  // se cae al pomodoro de 25 min para no arrancar con un reloj en cero.
+  useEffect(() => {
+    if (!target) return;
+    const seg = (target.minutos > 0 ? target.minutos : MIN_POR_DEFECTO) * 60;
+    setPlan(seg);
+    setRestante(seg);
+    setAgotado(false);
+    setCorriendo(true);
+    setGuardando(false);
+  }, [target]);
+
+  useEffect(() => {
+    if (!corriendo) return;
+    const id = setInterval(() => setRestante((r) => Math.max(0, r - 1)), 1000);
+    return () => clearInterval(id);
+  }, [corriendo]);
+
+  useEffect(() => {
+    if (restante === 0 && corriendo) {
+      setCorriendo(false);
+      setAgotado(true);
+    }
+  }, [restante, corriendo]);
+
+  const ampliar = () => {
+    setPlan((p) => p + 300);
+    setRestante((r) => r + 300);
+    setAgotado(false);
+    setCorriendo(true);
+  };
+
+  const progreso = plan > 0 ? ((plan - restante) / plan) * 100 : 0;
+  const porDefecto = !target || target.minutos <= 0;
+
+  return (
+    <Dialog open={!!target} onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+        <Typography sx={{ flexGrow: 1, fontWeight: 600 }}>{target?.title ?? ""}</Typography>
+        <IconButton onClick={onClose} size="small" aria-label="Cerrar sin guardar">
+          <CloseIcon />
+        </IconButton>
+      </DialogTitle>
+      <DialogContent>
+        <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
+          {agotado ? (
+            <Typography variant="h3" sx={{ fontWeight: 700 }}>
+              ¡Tiempo!
+            </Typography>
+          ) : (
+            <Box sx={{ position: "relative", display: "inline-flex" }}>
+              <CircularProgress variant="determinate" value={progreso} size={148} thickness={4} />
+              <Box
+                sx={{
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  position: "absolute",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Typography variant="h4" sx={{ fontWeight: 700 }}>
+                  {mmss(restante)}
+                </Typography>
+              </Box>
+            </Box>
+          )}
+        </Box>
+        <Typography variant="body2" color="text.secondary" sx={{ textAlign: "center" }}>
+          {agotado
+            ? "¿Lo has terminado?"
+            : `Plan: ~${Math.round(plan / 60)} min${porDefecto ? " (por defecto)" : ""}`}
+        </Typography>
+      </DialogContent>
+      <DialogActions sx={{ flexDirection: "column", gap: 1, alignItems: "stretch" }}>
+        {agotado ? (
+          <>
+            <Button
+              variant="contained"
+              disabled={guardando}
+              onClick={() => {
+                setGuardando(true);
+                onFinish(plan, plan, true);
+              }}
+              sx={{ borderRadius: 2 }}
+            >
+              Marcar como hecho
+            </Button>
+            <Button variant="outlined" disabled={guardando} onClick={ampliar} sx={{ borderRadius: 2 }}>
+              Seguir 5 min más
+            </Button>
+          </>
+        ) : (
+          <>
+            <Stack direction="row" spacing={1}>
+              <Button
+                variant="outlined"
+                fullWidth
+                onClick={() => setCorriendo((c) => !c)}
+                sx={{ borderRadius: 2 }}
+              >
+                {corriendo ? "Pausar" : "Seguir"}
+              </Button>
+              <Button variant="outlined" onClick={ampliar} sx={{ borderRadius: 2, flexShrink: 0 }}>
+                +5 min
+              </Button>
+            </Stack>
+            <Button
+              variant="contained"
+              disabled={guardando}
+              onClick={() => {
+                setGuardando(true);
+                onFinish(plan, plan - restante, true);
+              }}
+              sx={{ borderRadius: 2 }}
+            >
+              Terminar y marcar
+            </Button>
+          </>
+        )}
+      </DialogActions>
+    </Dialog>
   );
 }
 

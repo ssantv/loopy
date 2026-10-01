@@ -158,7 +158,7 @@ class WorkSession(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
-    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # homework | study | project
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # homework | study | project | task
     task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True)
     planned_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     actual_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

@@ -202,7 +202,7 @@ class HomeworkTemplateOut(BaseModel):
 
 
 class WorkSessionCreate(BaseModel):
-    kind: str = Field(pattern="^(homework|study|project)$")
+    kind: str = Field(pattern="^(homework|study|project|task)$")
     task_id: int | None = None
     planned_seconds: int = Field(default=0, ge=0)
     actual_seconds: int = Field(ge=0)
