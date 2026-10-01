@@ -24,6 +24,11 @@ import httpx
 API = "http://127.0.0.1:8000"
 DB = Path(__file__).resolve().parent.parent / "api" / "loopy_dev.db"
 
+# La consola de Windows va en cp1252 y no sabe imprimir las flechas "→" de los
+# mensajes: sin esto el guion revienta al informar, no al fallar.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 
 def ok(name: str, cond: bool, extra: str = "") -> None:
     print(f"  {'PASS' if cond else 'FAIL'}  {name}" + (f"  [{extra}]" if extra else ""))

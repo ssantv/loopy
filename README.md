@@ -109,6 +109,20 @@ ipconfig   # busca tu IPv4, p. ej. 192.168.1.43
 
 y abre `http://<tu-ip>:5173` en el navegador del móvil. Ojo: eso deja la app accesible para cualquiera de tu red local, solo para desarrollo.
 
+### Guiones de QA
+
+Los guiones de `docs/` (`qa-*.py` para la API y `qa-*.mjs` para el navegador) van contra los servidores reales, así que trabajan sobre `api/loopy_dev.db`. Créanse cuentas de prueba con cada pasada y, sin limpieza, la BD de desarrollo acaba llena de `qa_*`. Por eso se lanzan a través de `docs/qa_run.py`, que apunta el id más alto de `users` antes de empezar y borra lo creado después: como todo cuelga de `users` con `ON DELETE CASCADE`, se lleva por delante tareas, sesiones, recetas y planes.
+
+```bash
+# Guion de API
+api\.venv\Scripts\python.exe docs\qa_run.py -- api\.venv\Scripts\python.exe docs\qa-adult.py
+
+# Guion de navegador (necesita Vite en el 5173)
+api\.venv\Scripts\python.exe docs\qa_run.py -- node <ruta-a-browser.mjs> http://localhost:5173 --script docs\qa-home.mjs
+```
+
+Todo lo que va detrás del script es el comando a ejecutar; `qa_run.py` pasa el código de salida del guion tal cual. Ejecutarlo directamente (sin envoltorio) también funciona, pero deja las cuentas atrás.
+
 Ver la planificación funcional completa en [`Planteamiento.md`](Planteamiento.md).
 
 ## Seguridad
