@@ -114,3 +114,28 @@ async def test_task_id_de_otra_cuenta_no_se_acepta_al_listar(env):
     r = await _crear(env, tok, kind="task", task_id=tarea.json()["id"], actual_seconds=60)
     assert r.status_code == 201, r.text
     assert r.json()["task_id"] == tarea.json()["id"]
+
+
+async def test_no_se_puede_registrar_una_sesion_sobre_la_tarea_de_otro(env):
+    # El `task_id` va suelto en el cuerpo y la FK solo comprueba que exista, así
+    # que sin este check se colgaría una sesión de la tarea ajena y saldría en
+    # `GET /work-sessions` del otro niño.
+    tok_ana = await _adult(env, "ana@test.com")
+    tarea = await env.client.post(
+        "/api/tasks", json={"category": "general", "title": "Ordenar"}, headers={"Authorization": f"Bearer {tok_ana}"}
+    )
+    assert tarea.status_code in (200, 201), tarea.text
+
+    tok_beto = await _adult(env, "beto@test.com")
+    r = await _crear(env, tok_beto, kind="task", task_id=tarea.json()["id"], actual_seconds=60)
+    assert r.status_code == 404, r.text
+
+    # Y no queda nada colgando de la tarea ajena.
+    propias = await env.client.get("/api/work-sessions", headers={"Authorization": f"Bearer {tok_beto}"})
+    assert propias.json() == []
+
+
+async def test_no_se_puede_registrar_una_sesion_sobre_una_tarea_inexistente(env):
+    tok = await _adult(env, "ana@test.com")
+    r = await _crear(env, tok, kind="task", task_id=999999, actual_seconds=60)
+    assert r.status_code == 404, r.text

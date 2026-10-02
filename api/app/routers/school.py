@@ -16,6 +16,7 @@ from app.schemas.school import (
     CalendarOut,
     CalendarPlanOut,
     CalendarTaskOut,
+    DayLoadOut,
     ExamCreate,
     ExamOut,
     ExamPlanOut,
@@ -25,32 +26,14 @@ from app.schemas.school import (
     StudyUndoResponse,
     SubjectSessionRequest,
 )
+from app.services.clock import hoy
 from app.services.engine import as_rules, scheduled_dates_between
-from app.services.planner import ExamPlanCfg, StudyTask, plan_progress, plan_span, resumen_complete, spread_daily_load
+from app.services.load import day_load as calcular_day_load
+from app.services.plan_spread import expand_off_days, plan_cfg_for, spread_exams
+from app.services.planner import ExamPlanCfg, plan_progress, plan_span, resumen_complete
 from app.services.schedule import load_school_calendar
 
 router = APIRouter(prefix="/api", tags=["colegio"])
-
-# Cuántos días antes del rango pedido se genera el plan, para que el reparto de
-# carga tenga dónde empujar una sesión sin que se salga del cálculo.
-SPREAD_LOOKBACK_DAYS = 90
-
-
-def _expand_off_days(off_rows: list[OffDay], start: date, end: date) -> set[date]:
-    """Días sin cole como fechas sueltas, recortados al rango [start, end].
-
-    El planner trabaja con un `set[date]` (igual que hace con los fines de
-    semana), no con rangos: así no tiene que saber nada de "vacaciones", solo
-    de "este día no".
-    """
-    days: set[date] = set()
-    for row in off_rows:
-        d = max(row.start_on, start)
-        last = min(row.end_on, end)
-        while d <= last:
-            days.add(d)
-            d += timedelta(days=1)
-    return days
 
 
 async def _off_dates(db: AsyncSession, user_id: int, start: date, end: date) -> set[date]:
@@ -60,7 +43,7 @@ async def _off_dates(db: AsyncSession, user_id: int, start: date, end: date) -> 
             select(OffDay).where(OffDay.user_id == user_id, OffDay.end_on >= start, OffDay.start_on <= end)
         )
     ).scalars().all()
-    return _expand_off_days(rows, start, end)
+    return expand_off_days(rows, start, end)
 
 
 # ---------------------------------------------------------------- helpers
@@ -103,22 +86,6 @@ def _resumen_label(subject: Subject, phase: str, done_pages: int) -> str | None:
 
 
 # ---------------------------------------------------------------- exams
-
-def _cfg_for(subject: Subject, exam: Exam | None = None) -> ExamPlanCfg:
-    """Config del plan de un examen: la de su asignatura, con el override si lo hay.
-
-    Un examen puede necesitar mas (o menos) tiempo que su asignatura, y eso se
-    guarda en `Exam.prep_minutes_override`.
-    """
-    if exam is not None and exam.prep_minutes_override is not None:
-        return ExamPlanCfg.from_minutes(
-            prep_minutes=exam.prep_minutes_override,
-            session_minutes=subject.session_minutes,
-            weights=(subject.days_resumen, subject.days_estudio, subject.days_practica, subject.days_repaso),
-            include_weekends=subject.include_weekends,
-            resumen_total_pages=subject.resumen_total_pages,
-        )
-    return ExamPlanCfg.as_rule(subject)
 
 
 @router.post("/exams", response_model=ExamOut, status_code=status.HTTP_201_CREATED)
@@ -197,7 +164,7 @@ async def exam_plan(
 ) -> ExamPlanOut:
     exam = await _owned_exam(exam_id, user, db)
     subject = await _owned_subject(exam.subject_id, user, db)
-    cfg = _cfg_for(subject, exam)
+    cfg = plan_cfg_for(subject, exam)
 
     start = from_date or datetime.now(UTC).date()
     end = to or (exam.exam_date - timedelta(days=1))
@@ -442,6 +409,38 @@ async def undo_subject_session(
     return StudyUndoResponse(removed=removed)
 
 
+# ---------------------------------------------------------------- carga del día
+
+@router.get("/day-load", response_model=DayLoadOut)
+async def day_load(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    target: date | None = Query(None, alias="date"),
+) -> DayLoadOut:
+    """Minutos que ocupa un día (por defecto, hoy) y si el plan cabe en el tope.
+
+    Reutiliza el reparto del calendario, así que `study_minutes` y
+    `unplaced_study_minutes` son los mismos números que vería en el calendario.
+    `date` en el futuro está soportado; el pasado también, aunque las tareas
+    atrasadas se cuentan respecto a ese día, no a hoy.
+    """
+    carga = await calcular_day_load(db, user, target or hoy(user))
+    return DayLoadOut(
+        date=carga.date,
+        daily_max_minutes=carga.daily_max_minutes,
+        study_minutes=carga.study_minutes,
+        study_done_minutes=carga.study_done_minutes,
+        task_minutes=carga.task_minutes,
+        tasks_pending=carga.tasks_pending,
+        tasks_without_estimate=carga.tasks_without_estimate,
+        blocked_minutes=carga.blocked_minutes,
+        total_minutes=carga.total_minutes,
+        over_cap_minutes=carga.over_cap_minutes,
+        unplaced_study_minutes=carga.unplaced_study_minutes,
+        exams_pending=carga.exams_pending,
+    )
+
+
 # ---------------------------------------------------------------- calendario
 
 @router.get("/calendar", response_model=CalendarOut)
@@ -499,12 +498,13 @@ async def calendar(
                 )
             )
 
-    exams = (
-        await db.execute(
-            select(Exam).where(Exam.user_id == user.id, Exam.exam_date >= start).order_by(Exam.exam_date)
-        )
-    ).scalars().all()
-    subjects = {s.id: s for s in (await db.execute(select(Subject).where(Subject.user_id == user.id))).scalars()}
+    spread = await spread_exams(db, user, start, end)
+    plan_por_dia = spread.plan_por_dia
+    sin_cabida = spread.sin_cabida
+    subjects = spread.subjects
+    exam_meta = spread.exam_meta
+    completed_by_exam = spread.completed_by_exam
+
     sessions = (
         await db.execute(
             select(StudyCompletion)
@@ -512,66 +512,12 @@ async def calendar(
             .order_by(StudyCompletion.date)
         )
     ).scalars().all()
-    completions = (
-        await db.execute(
-            select(StudyCompletion).where(
-                StudyCompletion.user_id == user.id,
-                StudyCompletion.exam_id.is_not(None),
-            )
-        )
-    ).scalars().all()
-    completed_by_exam: dict[int, dict[date, StudyCompletion]] = {}
-    for c in completions:
-        completed_by_exam.setdefault(c.exam_id, {})[c.date] = c
-
-    # Días sin cole del rango, expandidos a fechas sueltas para el planner.
+    # Días sin cole del rango: aquí solo para pintar las vacaciones.
     off_rows = (
         await db.execute(
             select(OffDay).where(OffDay.user_id == user.id, OffDay.end_on >= start, OffDay.start_on <= end)
         )
     ).scalars().all()
-    off_days = _expand_off_days(off_rows, start, end)
-
-    study_tasks: list[StudyTask] = []
-    exam_meta: dict[int, tuple[Exam, Subject | None, int]] = {}
-    for ex in exams:
-        subject = subjects.get(ex.subject_id)
-        cfg = _cfg_for(subject, ex) if subject is not None else ExamPlanCfg()
-        done_pages = subject.resumen_done_pages if subject is not None else 0
-        exam_meta[ex.id] = (ex, subject, done_pages)
-        # Se genera desde antes de `start` porque el reparto de carga puede
-        # empujar una sesión a días anteriores al rango pedido.
-        for it in plan_span(
-            ex.exam_date,
-            cfg,
-            start - timedelta(days=SPREAD_LOOKBACK_DAYS),
-            end,
-            done_pages,
-            off_days,
-        ):
-            study_tasks.append(StudyTask(exam_date=ex.exam_date, subject_id=ex.subject_id, item=it, exam_id=ex.id))
-
-    # Reparto de carga: con varios exámenes, los planes por separado pedirían
-    # varias sesiones el mismo día. Lo ya completado se queda anclado a su día
-    # (el "hecho" se guardó con esa fecha) y solo se mueve lo pendiente.
-    done_tasks: list[StudyTask] = []
-    pending_tasks: list[StudyTask] = []
-    for t in study_tasks:
-        if t.exam_id in completed_by_exam and t.date in completed_by_exam[t.exam_id]:
-            done_tasks.append(t)
-        else:
-            pending_tasks.append(t)
-    busy: dict[date, int] = {}
-    for t in done_tasks:
-        busy[t.date] = busy.get(t.date, 0) + t.minutes
-    plan_por_dia, sin_cabida = spread_daily_load(
-        pending_tasks,
-        daily_max_minutes=user.study_max_minutes,
-        is_valid=cal.is_school_day,
-        busy=busy,
-    )
-    for t in done_tasks:
-        plan_por_dia.setdefault(t.date, []).append(t)
 
     for day, day_tasks in plan_por_dia.items():
         if not (start <= day <= end):
@@ -635,5 +581,9 @@ async def calendar(
         day += timedelta(days=1)
 
     return CalendarOut(
-        from_date=start, to=end, days=days, unplaced_study_minutes=sum(t.minutes for t in sin_cabida)
+        from_date=start,
+        to=end,
+        days=days,
+        unplaced_study_minutes=sum(t.minutes for t in sin_cabida),
+        daily_max_minutes=user.study_max_minutes,
     )

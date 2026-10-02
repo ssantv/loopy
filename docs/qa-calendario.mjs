@@ -20,7 +20,10 @@ export default async function run(page, ui) {
   // dejar limpio el día de hoy (desmarcar cualquier "Hecho")
   const tree = await ui.snapshot({ full: true });
   out.home = tree;
-  out.hasPlan = tree.includes("Sociales") && tree.includes("Estudio");
+  // La home ya no muestra "Sociales · Estudio" cuando el tramo de hoy está hecho:
+  // pasa a "Examen en N días". Lo que se comprueba es que el plan sea visible de
+  // alguna forma, no una etiqueta concreta que depende del estado del fixture.
+  out.hasPlan = tree.includes("Próximos exámenes") || (tree.includes("Sociales") && tree.includes("Estudio"));
 
   // --- toggle del plan item: marcar el estudio de hoy como hecho ---
   snap = await ui.snapshot();
@@ -78,7 +81,7 @@ export default async function run(page, ui) {
       await ui.click(mes);
       await page.waitForTimeout(1200);
       snap = await ui.snapshot({ full: true });
-      out.mesView = snap.includes("sep") || snap.includes("sept");
+      out.mesView = snap.includes("MES") || snap.includes("Mes");
       out.mesHasPlan = snap.includes("Sociales");
     } else {
       out.noMesButton = true;

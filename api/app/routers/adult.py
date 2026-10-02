@@ -9,7 +9,6 @@ Compra y resumen son solo para el perfil adulto.
 """
 
 from datetime import UTC, date, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -37,6 +36,7 @@ from app.schemas.adult import (
     SummaryMonthOut,
 )
 from app.schemas.task import CompleteRequest, TaskDoneResponse
+from app.services.clock import hoy
 from app.services.engine import compute_next_cursor
 from app.services.home import group_home, next_occurrence
 from app.services.shopping import normalize_name, suggest
@@ -55,13 +55,6 @@ def _require_adult(user: User) -> None:
         )
 
 
-def _today_local(user: User) -> date:
-    try:
-        return datetime.now(ZoneInfo(user.timezone)).date()
-    except Exception:
-        return datetime.now(UTC).date()
-
-
 def _home_item(item: dict) -> HomeItem:
     return HomeItem(**item)
 
@@ -74,7 +67,7 @@ async def home_day(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> HomeOut:
-    today = day or _today_local(user)
+    today = day or hoy(user)
     rooms = (
         (await db.execute(select(Room).where(Room.user_id == user.id).order_by(Room.sort_order, Room.name)))
         .scalars()
@@ -120,7 +113,7 @@ async def advance_task(
     el siguiente queda tras hoy. Cero cambios si no hay nada que adelantar.
     """
     task = await _get_owned_task(task_id, user, db)
-    today = _today_local(user)
+    today = hoy(user)
     target = next_occurrence(task, today)
     if target is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No hay ocurrencia futura que adelantar")
@@ -245,7 +238,7 @@ async def recommend_shopping(
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ) -> list[ShoppingRecommendOut]:
     _require_adult(user)
-    today = _today_local(user)
+    today = hoy(user)
     since = today - timedelta(days=90)
     # Normalizar en SQL: traemos nombres cronológicos y agrupamos en Python (listas cortas).
     purchased = (

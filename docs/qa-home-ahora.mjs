@@ -37,6 +37,10 @@ export default async function run(page, ui) {
   const tree1 = await ui.snapshot({ full: true });
   const heroInicial = tree1.includes("Ahora") && tree1.includes("Mate: página 12");
   const minutos = tree1.includes("~20 min");
+  // La carga del día dice "20 min de tareas" (Mate) más el aviso de la tarea sin
+  // estimación. El texto llega partido en varios nodos del árbol, así que se
+  // busca con regex en vez de con includes.
+  const cargaAntes = tree1.includes("20 min de tareas") && /sin estimación/.test(tree1);
 
   await page.getByRole("button", { name: "Hecho", exact: true }).click();
   await page.waitForTimeout(1800);
@@ -52,6 +56,11 @@ export default async function run(page, ui) {
 
   const tree2 = await ui.snapshot({ full: true });
   const heroAvanza = tree2.includes("Ahora") && tree2.includes("Sacar la basura");
+  // Marcar la tarea tiene que mover el número de la carga sin recargar: si no se
+  // vuelve a pedir /day-load, la tarjeta se queda con los 20 min de una tarea ya
+  // hecha. Al quedar solo "Sacar la basura", que no tiene estimación, no hay nada
+  // que repartir y la tarjeta desaparece entera.
+  const cargaBaja = !/20 min de tareas/.test(tree2) && !/Repartiendo el estudio/.test(tree2);
 
-  return { heroInicial, minutos, mateDone, heroAvanza, cuerpo: tree2.slice(0, 700) };
+  return { heroInicial, minutos, cargaAntes, mateDone, heroAvanza, cargaBaja, cuerpo: tree2.slice(0, 700) };
 }

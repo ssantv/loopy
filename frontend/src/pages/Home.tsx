@@ -7,6 +7,8 @@ import {
   workSessionApi,
   urlBase64ToUint8Array,
   subjectApi,
+  dayLoadApi,
+  type DayLoad,
   type Exam,
   type Task,
   examApi,
@@ -167,8 +169,20 @@ export default function Home() {
   const [ajustando, setAjustando] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkMsg, setBulkMsg] = useState<string | null>(null);
+  const [carga, setCarga] = useState<DayLoad | null>(null);
 
   const today = useMemo(todayISO, []);
+
+  // La carga del día va aparte porque la calcula el backend (reparto del plan +
+  // ritmo real del temporizador) y falla sin romper la pantalla: si no se puede,
+  // Mi día sigue enseñando lo de siempre.
+  const loadCarga = useCallback(async () => {
+    try {
+      setCarga(await dayLoadApi.get(today));
+    } catch {
+      setCarga(null);
+    }
+  }, [today]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -196,8 +210,12 @@ export default function Home() {
       setError(e instanceof Error ? e.message : "Error al cargar tareas");
     } finally {
       setLoading(false);
+      // La carga se recalcula con cada recarga de la pantalla porque depende de lo
+      // mismo que se acaba de cambiar: marcar una tarea como hecha o añadir una
+      // sesión de estudio la deja obsoleta si no se vuelve a pedir.
+      void loadCarga();
     }
-  }, [today, isChild]);
+  }, [today, isChild, loadCarga]);
 
   useEffect(() => {
     void load();
@@ -437,6 +455,8 @@ export default function Home() {
           </Box>
         ) : (
           <Stack spacing={3}>
+            {carga && <CargaDelDia carga={carga} />}
+
             {focus && (
           <FocusCard
             focus={focus}
@@ -720,6 +740,63 @@ function SessionDialog({
         <Button onClick={onClose}>Cerrar</Button>
       </DialogActions>
     </Dialog>
+  );
+}
+
+/** "Hoy: 2 h 05 min" sin decimales ni "0 min" cuando no hay nada que decir. */
+function minutosLegibles(min: number): string {
+  if (min <= 0) return "";
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (!h) return `${m} min`;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
+/**
+ * Cuánto ocupa el día, en una línea.
+ *
+ * Solo se enseña si hay algo que contar: un día vacío no necesita un resumen, y
+ * la app que avisa de todo avisa de nada. El aviso que sí importa es el que el
+ * backend ya sabe que es cierto: minutos del plan que no han cabido bajo el
+ * tope, que antes se calculaban y nadie miraba.
+ */
+function CargaDelDia({ carga }: { carga: DayLoad }) {
+  const partes: string[] = [];
+  if (carga.task_minutes > 0) partes.push(`${minutosLegibles(carga.task_minutes)} de tareas`);
+  if (carga.study_minutes > 0) partes.push(`${minutosLegibles(carga.study_minutes)} de estudio`);
+  if (carga.blocked_minutes > 0) partes.push(`${minutosLegibles(carga.blocked_minutes)} de extraescolar`);
+
+  const noCabe = carga.unplaced_study_minutes > 0;
+  if (!partes.length && !noCabe) return null;
+
+  return (
+    <Paper elevation={0} sx={{ p: 1.5, borderRadius: 2, bgcolor: "background.paper", border: 1, borderColor: "divider" }}>
+      <Typography variant="overline" color="text.secondary" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+        Tu día
+      </Typography>
+      {partes.length > 0 && (
+        <Typography variant="body2" sx={{ mt: 0.25 }}>
+          {partes.join(" · ")}
+        </Typography>
+      )}
+      {carga.daily_max_minutes > 0 && (
+        <Typography variant="caption" color="text.secondary" component="div">
+          Repartiendo el estudio hasta {minutosLegibles(carga.daily_max_minutes)} al día
+        </Typography>
+      )}
+      {carga.tasks_without_estimate > 0 && (
+        <Typography variant="caption" color="text.secondary" component="div">
+          {carga.tasks_without_estimate} tarea{carga.tasks_without_estimate === 1 ? "" : "s"} sin
+          estimación: cuenta como cero hasta que crones una
+        </Typography>
+      )}
+      {noCabe && (
+        <Alert severity="warning" sx={{ mt: 1, borderRadius: 1, py: 0 }}>
+          Con el reparto actual, {minutosLegibles(carga.unplaced_study_minutes)} del plan no llegan a
+          caber en ningún día. Subir el tope en Perfil o dejar un examen para después.
+        </Alert>
+      )}
+    </Paper>
   );
 }
 

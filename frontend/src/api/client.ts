@@ -79,8 +79,11 @@ export const api = {
   }) => request<User>("/api/auth/children", { method: "POST", body: JSON.stringify(payload) }),
   children: () => request<User[]>("/api/auth/children"),
   me: () => request<User>("/api/auth/me"),
-  updateMe: (payload: { display_name?: string | null; course?: string | null }) =>
-    request<User>("/api/auth/me", { method: "PATCH", body: JSON.stringify(payload) }),
+  updateMe: (payload: {
+    display_name?: string | null;
+    course?: string | null;
+    study_max_minutes?: number | null;
+  }) => request<User>("/api/auth/me", { method: "PATCH", body: JSON.stringify(payload) }),
   logout: () => request<void>("/api/auth/logout", { method: "POST" }),
   requestPasswordReset: (payload: { email: string }) =>
     request<{ detail: string }>("/api/auth/password-reset/request", { method: "POST", body: JSON.stringify(payload) }),
@@ -462,12 +465,41 @@ export interface Calendar {
   from: string;
   to: string;
   days: Record<string, CalendarDay>;
+  /** Minutos de estudio que no caben bajo el tope diario en el rango pedido. */
+  unplaced_study_minutes: number;
+  /** El tope con el que se repartió el plan. 0 = sin tope. */
+  daily_max_minutes: number;
 }
 
 export const calendarApi = {
   get: (from: string, to: string) => {
     const qs = new URLSearchParams({ from, to });
     return request<Calendar>(`/api/calendar?${qs.toString()}`);
+  },
+};
+
+/** Minutos que ocupa un día y si el plan de estudio cabe en el tope. */
+export interface DayLoad {
+  date: string;
+  /** Tope de estudio diario. 0 = sin tope. */
+  daily_max_minutes: number;
+  study_minutes: number;
+  study_done_minutes: number;
+  task_minutes: number;
+  tasks_pending: number;
+  /** Tareas sin `est_minutes` y sin historial: no se les inventa duración. */
+  tasks_without_estimate: number;
+  blocked_minutes: number;
+  total_minutes: number;
+  over_cap_minutes: number;
+  unplaced_study_minutes: number;
+  exams_pending: number;
+}
+
+export const dayLoadApi = {
+  get: (date?: string) => {
+    const qs = date ? `?date=${date}` : "";
+    return request<DayLoad>(`/api/day-load${qs}`);
   },
 };
 

@@ -11,6 +11,18 @@ export default async function run(page, ui) {
   const token = (await reg.json()).token;
   note("usuario fresco: " + email);
 
+  // El SW solo se registra en build (ver registerSW.ts), así que en `npm run dev` no
+  // hay push posible. Ojo: no basta con mirar si existen `PushManager` y
+  // `serviceWorker`, que en headless siempre están; lo que falta es el SW
+  // registrado y controlando la página, y sin eso "Desuscribir" no termina.
+  await page.waitForFunction(() => !!navigator.serviceWorker?.controller, null, { timeout: 8000 }).catch(() => null);
+  const sinPush = await page.evaluate(() => !navigator.serviceWorker?.controller);
+  if (sinPush) return { error: "push no disponible: hay que servir el build (npm run build && npm run preview), no el dev server" };
+
+  // Rellenar antes de que la SPA termine de redirigir a /login hacía que React
+  // remontara el input y lo vaciara: el envío fallaba con "Please fill out this
+  // field". Se espera a que el formulario sea el que está en pantalla.
+  await page.waitForSelector("input[type=email]", { timeout: 15000 });
   await page.getByLabel(/email/i).fill(email);
   await page.getByLabel(/contrase/i).fill("secret123");
   await page.getByRole("button", { name: /entrar|iniciar/i }).click();

@@ -20,6 +20,7 @@ Las reglas están elegidas para que el módulo **se calle casi siempre**:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -41,6 +42,17 @@ MAX_SUGGESTED = 240
 # Por debajo de estas dos diferencias, el módulo no dice nada.
 MIN_DIFF_MINUTES = 5
 MIN_DIFF_RATIO = 0.2
+
+# `work_sessions.kind` habla de tipos de trabajo y `Task.category` de matière;
+# esta es la traducción que usa el temporizador del frontend (`kindDeCategoria`
+# en Home.tsx) y que el backend necesita para agrupar el ritmo real por tarea.
+KIND_POR_CATEGORIA = {"colegio-deberes": "homework", "colegio-trabajo": "project"}
+
+
+def kind_de_categoria(categoria: str) -> str:
+    """Tipo de trabajo de `work_sessions` que corresponde a una categoría de tarea."""
+    return KIND_POR_CATEGORIA.get(categoria, "task")
+
 
 
 @dataclass(frozen=True)
@@ -120,3 +132,63 @@ async def suggest_estimate(
     if diferencia < MIN_DIFF_MINUTES or diferencia < MIN_DIFF_RATIO * referencia:
         return Estimate(None, len(filas), base, planificado, real)
     return Estimate(real, len(filas), base, planificado, real)
+
+
+async def ritmos_reales(
+    db: AsyncSession, user: User, pares: Sequence[tuple[str, int]]
+) -> dict[tuple[str, int], int]:
+    """Minutos reales de varias `(kind, task_id)` de golpe, o los que falten.
+
+    A diferencia de `suggest_estimate` aquí no hay umbral: no se pregunta "qué le
+    decimos al usuario" sino "cuánto cuesta esto de verdad", y un dato bueno
+    vale aunque la diferencia con lo planificado sea pequeña. Solo entra lo que
+    hay para quedarse: los minutos que diga, se le pueden sumar a una carga.
+
+    Dos consultas (por tarea, y por tipo para las que no llegan a `MIN_SAMPLES`)
+    en lugar de dos por tarea.
+    """
+    if not pares:
+        return {}
+    pedidos = set(pares)
+    task_ids = [tid for _, tid in pares]
+
+    por_tarea: dict[int, list[int]] = {}
+    if task_ids:
+        filas = (
+            await db.execute(
+                select(WorkSession.actual_seconds, WorkSession.task_id).where(
+                    WorkSession.user_id == user.id,
+                    WorkSession.actual_seconds >= MIN_USABLE_SECONDS,
+                    WorkSession.task_id.in_(task_ids),
+                )
+            )
+        ).all()
+        for seg, tid in filas:
+            por_tarea.setdefault(tid, []).append(seg)
+
+    faltan = [par for par in pares if len(por_tarea.get(par[1], [])) < MIN_SAMPLES]
+    por_tipo: dict[str, list[int]] = {}
+    kinds = {kind for kind, _ in faltan}
+    if kinds:
+        filas = (
+            await db.execute(
+                select(WorkSession.actual_seconds, WorkSession.kind).where(
+                    WorkSession.user_id == user.id,
+                    WorkSession.actual_seconds >= MIN_USABLE_SECONDS,
+                    WorkSession.kind.in_(kinds),
+                )
+            )
+        ).all()
+        for seg, kind in filas:
+            por_tipo.setdefault(kind, []).append(seg)
+
+    salida: dict[tuple[str, int], int] = {}
+    for kind, tid in pedidos:
+        muestras = por_tarea.get(tid, [])
+        if len(muestras) >= MIN_SAMPLES:
+            salida[(kind, tid)] = _redondear(_median(muestras) / 60)
+            continue
+        por_kind = por_tipo.get(kind, [])
+        if len(por_kind) >= MIN_SAMPLES:
+            salida[(kind, tid)] = _redondear(_median(por_kind) / 60)
+    return salida

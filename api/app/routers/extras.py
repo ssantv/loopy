@@ -91,6 +91,18 @@ async def delete_extracurricular(
 async def create_work_session(
     payload: WorkSessionCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ) -> WorkSessionOut:
+    """Registra una sesión del temporizador.
+
+    Si viene `task_id` tiene que ser una tarea del propio usuario: sin este
+    check se podía colgar una sesión de la tarea de otro niño y luego leerla por
+    `GET /work-sessions` (la FK no filtra por usuario).
+    """
+    if payload.task_id is not None:
+        propia = (
+            await db.execute(select(Task.id).where(Task.id == payload.task_id, Task.user_id == user.id))
+        ).scalar_one_or_none()
+        if propia is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada")
     session = WorkSession(user_id=user.id, **payload.model_dump())
     if payload.completed_at is None:
         session.completed_at = datetime.now(UTC)

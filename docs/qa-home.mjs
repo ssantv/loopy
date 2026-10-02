@@ -24,11 +24,15 @@ export default async function run(page, ui) {
     // Fechas relativas a hoy: con fechas fijas el guion se pudre al día siguiente.
     const hoy = new Date();
     const d = (n) => new Date(hoy.getTime() + n * 864e5).toISOString().slice(0, 10);
+    // El bitmask de la app es bit 0=lunes..6=domingo, pero `getDay()` es 0=domingo.
+    // Con una máscara fija ("9" = lunes+jueves) el guion solo pasaba esos dos días
+    // y el resto de la semana fallaba sin que nada estuviera roto.
+    const bitHoy = 1 << ((hoy.getDay() + 6) % 7);
     const t1 = await j("/api/tasks", { category: "colegio-deberes", title: "Mate: página 12", rec_type: "daily", est_minutes: 20 }, token);
-    const t2 = await j("/api/tasks", { category: "general", title: "Sacar la basura", rec_type: "weekly_days", rec_week_mask: 9 }, token);
+    const t2 = await j("/api/tasks", { category: "general", title: "Sacar la basura", rec_type: "weekly_days", rec_week_mask: bitHoy }, token);
     const t3 = await j("/api/tasks", { category: "puntual", title: "Comprar leche", due_on: d(0) }, token);
-    return { email, nombre, token, t1, t2, t3 };
-  }, { email, nombre });
+    return { email, nombre, token, t1, t2, t3, bitHoy };
+}, { email, nombre });
 
   // 2) El niño no tiene email: se entra por su puerta con nombre y PIN.
   await page.goto("http://localhost:5173/nino");

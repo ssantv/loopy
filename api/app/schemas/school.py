@@ -229,6 +229,26 @@ class WorkSessionEstimateOut(BaseModel):
     actual_minutes: int
 
 
+# ---------------------------------------------------------------- carga del día
+
+
+class DayLoadOut(BaseModel):
+    """Minutos que ocupa un día y si el plan de estudio cabe en el tope."""
+
+    date: date
+    daily_max_minutes: int
+    study_minutes: int
+    study_done_minutes: int
+    task_minutes: int
+    tasks_pending: int
+    tasks_without_estimate: int
+    blocked_minutes: int
+    total_minutes: int
+    over_cap_minutes: int
+    unplaced_study_minutes: int
+    exams_pending: int
+
+
 # ---------------------------------------------------------------- check-in
 
 
@@ -394,3 +414,6 @@ class CalendarOut(BaseModel):
     # Minutos de estudio que no han cabido dentro del tope diario en este rango.
     # El frontend puede avisar ("para esta semana no caben tantos exámenes").
     unplaced_study_minutes: int = 0
+    # El tope con el que se repartió, para que el frontend pueda decir
+    # "caben 60 al día" en vez de tener que repetir el número en cada sitio.
+    daily_max_minutes: int = 60

@@ -136,7 +136,13 @@ export default function Calendario() {
       for (let d = new Date(start); d <= end; d = addDays(d, 1)) {
         days[toISO(d)] = cal.days[toISO(d)] ?? { tasks: [], plan: [] };
       }
-      setData({ from, to, days });
+      setData({
+        from,
+        to,
+        days,
+        unplaced_study_minutes: cal.unplaced_study_minutes ?? 0,
+        daily_max_minutes: cal.daily_max_minutes ?? 0,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error al cargar el calendario");
     } finally {

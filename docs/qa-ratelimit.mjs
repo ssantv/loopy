@@ -1,6 +1,8 @@
 ﻿// QA del rate limit del login: 5 intentos fallidos -> el bloqueo debe verse en la UI.
 // Espera a que el texto del Alert CAMBIE en cada intento (si no, lee el aviso viejo).
-const EMAIL = 'prueba@prueba.es'
+// El email lleva timestamp a propósito: es una cuenta que hay que bloquear a mano, y
+// con un email fijo la segunda pasada empieza ya bloqueada por la anterior.
+const EMAIL = `prueba_rl_${Date.now()}@prueba.es`
 const PASSWORD = '12345678'
 const MAX = 6
 
@@ -52,10 +54,12 @@ export default async function run(page, ui) {
     .catch(() => {})
   const conPasswdOk = (await alertText(page)) || '(sin alert)'
 
-  return {
+return {
     intentos,
     rutaFinal: new URL(page.url()).pathname,
-    entroConPasswdCorrecta: new URL(page.url()).pathname !== '/login',
-    mensajeConPasswdCorrecta: conPasswdOk,
-  }
+    // Que sea `false` es lo esperado: con la cuenta bloqueada ni la contraseña
+    // correcta debe dejar entrar. Se devuelve invertido para no leerlo como fallo.
+    bloqueadoAunquePasswordCorrecta: new URL(page.url()).pathname === '/login',
+mensajeConPasswdCorrecta: conPasswdOk,
+  };
 }

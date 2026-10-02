@@ -48,6 +48,10 @@ export default function Perfil() {
   const [nueva, setNueva] = useState("");
   // Último curso confirmado por el servidor, para no reenviarlo en cada blur.
   const [cursoGuardado, setCursoGuardado] = useState<string | null>(null);
+  // Tope de estudio diario. Se guarda como texto para poder distinguir "vacío" de
+  // "0" (que es sin límite). 0 = sin tope.
+  const [tope, setTope] = useState("60");
+  const [topeGuardado, setTopeGuardado] = useState(60);
 
   const cargar = useCallback(async () => {
     setLoading(true);
@@ -55,6 +59,8 @@ export default function Perfil() {
       const [u, subs, ex] = await Promise.all([api.me(), subjectApi.list(), examApi.list()]);
       setCourse(u.course ?? "");
       setCursoGuardado(u.course ?? null);
+      setTope(String(u.study_max_minutes));
+      setTopeGuardado(u.study_max_minutes);
       setSubjects(subs);
       setExams(ex);
       setError(null);
@@ -81,6 +87,29 @@ export default function Perfil() {
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo guardar el curso");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function guardarTope() {
+    // Campo vacío o texto que no es un entero: no se guarda nada y se vuelve al
+    // último valor bueno. Enviar 0 aquí desactivaría el tope sin querer.
+    const n = Number(tope);
+    if (tope.trim() === "" || !Number.isInteger(n) || n < 0 || n > 100000) {
+      setTope(String(topeGuardado));
+      return;
+    }
+    if (n === topeGuardado) return;
+    setSaving(true);
+    try {
+      await api.updateMe({ study_max_minutes: n });
+      setTopeGuardado(n);
+      setTope(String(n));
+      setSaved(true);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo guardar el tope");
     } finally {
       setSaving(false);
     }
@@ -187,6 +216,53 @@ export default function Perfil() {
             }}
           />
           <Button variant="contained" onClick={() => void guardarCurso()} disabled={saving}>
+            Guardar
+          </Button>
+        </Stack>
+        {saved && (
+          <Typography variant="caption" color="success.main" sx={{ display: "block", mb: 2 }}>
+            Guardado.
+          </Typography>
+        )}
+        {!saved && <Box sx={{ height: 22 }} />}
+
+        <Divider sx={{ my: 2 }} />
+
+        {/* ---------------------------------------------- tope */}
+        <Typography variant="subtitle1" sx={{ mb: 0.5 }}>
+          Cuánto puede estudiar al día
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Cuando hay varios exámenes a la vez, el reparto no pone más de este tiempo en un mismo
+          día. Lo que no cabe se va hacia atrás, y si tampoco cabe, Mi día te avisa. Pon 0 para no
+          poner límite.
+        </Typography>
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+          <TextField
+            size="small"
+            type="number"
+            label="Minutos al día"
+            value={tope}
+            // Se guarda el texto, no el número: si se convierte al vuelo, borrar el
+            // campo lo dejaría en 0 —que significa "sin límite"— y al hacer blur
+            // desactivaría el tope sin que nadie lo pidiera.
+            onChange={(e) => {
+              setTope(e.target.value);
+              setSaved(false);
+            }}
+            error={tope !== "" && (!Number.isInteger(Number(tope)) || Number(tope) < 0 || Number(tope) > 100000)}
+            helperText={
+              tope !== "" && !Number.isInteger(Number(tope))
+                ? "Un número entero de minutos (0 = sin límite)"
+                : "0 = sin límite"
+            }
+            onBlur={() => void guardarTope()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void guardarTope();
+            }}
+            slotProps={{ htmlInput: { min: 0, max: 100000, "aria-label": "Minutos al día" } }}
+          />
+          <Button variant="contained" onClick={() => void guardarTope()} disabled={saving}>
             Guardar
           </Button>
         </Stack>
