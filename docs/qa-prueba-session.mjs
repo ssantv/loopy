@@ -1,6 +1,8 @@
 // El service worker solo se registra en build (ver registerSW.ts), así que este
-// guion necesita el build servido, no `npm run dev`. Antes de fallar con un timeout
-// de 15s sin contexto, lo dice claro.
+// guion necesita el build servido, no `npm run dev`. `npm run qa:build` lo lanza
+// contra el build; contra el dev server lo dice claro en vez de dar un timeout.
+export const necesitaBuild = true;
+
 export default async function run(page, ui) {
   const errors = [];
   page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));

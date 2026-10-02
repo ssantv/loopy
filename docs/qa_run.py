@@ -10,10 +10,17 @@ borra todo lo que se haya creado despues. Como todas las tablas cuelgan de
 `users` con `ON DELETE CASCADE`, se lleva por delante cada tarea, sesion, receta
 o plan que los guiones hubieran dejado.
 
+Ojo: esto solo limpia si el guion se lanza a traves del envoltorio. Un
+`node docs/qa-driver.mjs` a pelo deja las cuentas dentro, que es como se
+acabo bloqueando la BD de desarrollo varias veces.
+
 Uso (desde la raiz del repo):
 
     python docs/qa_run.py -- api\\.venv\\Scripts\\python.exe docs\\qa-adult.py
-    python docs/qa_run.py -- node <ruta-a-browser.mjs> http://localhost:5173 --script docs\\qa-home.mjs
+    python docs/qa_run.py -- node docs/qa-driver.mjs http://localhost:5173 --script docs/qa-home.mjs
+
+Lo normal no es llamarlo a mano: `npm run qa` y `npm run qa:build` ya lo hacen
+por cada guion. Ver docs/qa.md.
 
 Todo lo que va despues del script es el comando a ejecutar, tal cual. El `--`
 inicial es opcional.

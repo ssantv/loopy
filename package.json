@@ -1,0 +1,14 @@
+{
+  "name": "loopy-qa",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Herramientas de QA de navegador. No es la app: aquí vive el driver y el runner de docs/*.mjs. La app y sus dependencias están en frontend/.",
+  "type": "module",
+  "scripts": {
+    "qa": "node docs/qa-suite.mjs",
+    "qa:build": "node docs/qa-suite.mjs --build"
+  },
+  "devDependencies": {
+    "playwright-core": "1.63.0"
+  }
+}

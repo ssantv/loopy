@@ -1,3 +1,7 @@
+// El push necesita el service worker, y el SW solo se registra en producción
+// (ver registerSW.ts). `npm run qa:build` lo lanza contra el build servido.
+export const necesitaBuild = true;
+
 export default async function run(page, ui) {
   const out = { steps: [], final: null };
   const note = (m) => out.steps.push(m);
