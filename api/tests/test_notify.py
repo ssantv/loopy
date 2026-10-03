@@ -151,22 +151,46 @@ def test_reminder_sin_notify_no_avisa():
 
 # ---------------------------------------------------------------- resumen de texto
 
-def _shop(purchased=False):
-    return type("S", (), {"name": "Leche", "purchased": purchased})()
+def _shop(purchased=False, name="Leche"):
+    return type("S", (), {"name": name, "purchased": purchased})()
 
 
 def test_summarize_day_combina_pendientes_atrasadas_y_compra():
     hoy = datetime(2026, 9, 20).date()
-    tasks = [_task(rec_type=None, due_on=hoy), _task(rec_type=None, due_on=datetime(2026, 9, 19).date())]
+    tasks = [
+        _task(id=1, title="Lengua", rec_type=None, due_on=hoy),
+        _task(id=2, title="Matemáticas", rec_type=None, due_on=hoy),
+        _task(id=3, title="Dientes", rec_type=None, due_on=datetime(2026, 9, 19).date()),
+    ]
     text = summarize_day(tasks, [_shop(), _shop(purchased=True)], hoy)
-    assert "1 tareas para hoy" in text
+    assert "2 tareas para hoy" in text
     assert "1 atrasadas" in text
-    assert "1 en la lista de la compra" in text
+    assert "1 en la compra" in text
+
+
+def test_summarize_day_una_sola_tarea_dice_cual():
+    # Con una sola cosa pendiente, el recuento no ayuda a nadie: el nombre sí.
+    hoy = datetime(2026, 9, 20).date()
+    text = summarize_day([_task(id=1, title="Sacar basura", rec_type=None, due_on=hoy)], [], hoy)
+    assert "1 tarea: Sacar basura" in text
+    assert "tareas para hoy" not in text
 
 
 def test_summarize_day_vacio():
     text = summarize_day([], [], datetime(2026, 9, 20).date())
     assert "Nada pendiente" in text
+
+
+def test_summarize_day_cabe_en_un_banner():
+    # Un push de móvil se lee en dos segundos: el texto no puede crecer con el
+    # número de tareas ni con la longitud de los títulos.
+    hoy = datetime(2026, 9, 20).date()
+    tasks = [_task(id=i, title="Tarea " + "x" * 40, rec_type=None, due_on=hoy) for i in range(40)]
+    tasks += [_task(id=100 + i, title="Atrasada", rec_type=None, due_on=datetime(2026, 9, 1).date()) for i in range(12)]
+    text = summarize_day(tasks, [_shop(), _shop(name="Pan")], hoy)
+    assert len(text) < 90
+    assert "40 tareas" in text
+    assert "12 atrasadas" in text
 
 
 # ---------------------------------------------------------------- payloads

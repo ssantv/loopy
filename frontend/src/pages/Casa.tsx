@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { BOTTOM_BAR_PADDING, PageNav, SubNav } from "../components/Nav";
-import { homeApi, roomApi, taskApi, type HomeItem, type HomeOut, type Room } from "../api/client";
+import ReminderToggle from "../components/ReminderToggle";
+import { homeApi, pushApi, roomApi, taskApi, type HomeItem, type HomeOut, type Room } from "../api/client";
 import { todayISO } from "./today";
 import Tabs from "@mui/material/Tabs";
 import Tab from "@mui/material/Tab";
@@ -35,6 +36,11 @@ function fmtDay(d: string | null): string {
   return date.toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" });
 }
 
+/** Devuelve la lista con la tarea actualizada, para no tener que recargar la página. */
+function aplicar(items: HomeItem[], t: { id: number; notify: boolean; due_at: string | null }): HomeItem[] {
+  return items.map((i) => (i.id === t.id ? { ...i, notify: t.notify, due_at: t.due_at } : i));
+}
+
 export default function Casa() {
   const today = todayISO();
   const [home, setHome] = useState<HomeOut | null>(null);
@@ -43,6 +49,9 @@ export default function Casa() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState(0);
   const [openAhead, setOpenAhead] = useState<Record<string, boolean>>({});
+  // El aviso solo llega si el usuario está suscrito al push. Preguntarlo es
+  // barato (un GET) y evita el "yo lo activé y no me llegó nada".
+  const [pushListo, setPushListo] = useState(true);
 
   // Formulario de nueva tarea
   const [newTitle, setNewTitle] = useState("");
@@ -71,6 +80,30 @@ export default function Casa() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    // `segment === "subscribed"` es lo único que importa; si el push no está
+    // configurado en el servidor, `enabled` sale false y no hay nada que avise.
+    pushApi
+      .config()
+      .then((c) => setPushListo(c.enabled && c.segment === "subscribed"))
+      .catch(() => setPushListo(false));
+  }, []);
+
+  const trasCambiarAviso = useCallback(
+    (t: { id: number; notify: boolean; due_at: string | null }) => {
+      setHome((h) =>
+        h
+          ? {
+              ...h,
+              rooms: h.rooms.map((r) => ({ ...r, pending: aplicar(r.pending, t), ahead: aplicar(r.ahead, t) })),
+              no_room: { ...h.no_room, pending: aplicar(h.no_room.pending, t), ahead: aplicar(h.no_room.ahead, t) },
+            }
+          : h,
+      );
+    },
+    [],
+  );
 
   const toggleToday = useCallback(
     async (item: HomeItem) => {
@@ -169,7 +202,14 @@ export default function Casa() {
                 ({r.pending.length} pendientes)
               </Typography>
             </Stack>
-            <TaskCheckList items={r.pending} doneToday={today} onToggle={toggleToday} />
+            <TaskCheckList
+              items={r.pending}
+              doneToday={today}
+              onToggle={toggleToday}
+              pushListo={pushListo}
+              onReminderChanged={trasCambiarAviso}
+              onError={setError}
+            />
             {r.ahead.length > 0 && (
               <Box>
                 <Button
@@ -279,7 +319,14 @@ export default function Casa() {
                   <Typography variant="h6" sx={{ mb: 1 }}>
                     Sin habitación
                   </Typography>
-                  <TaskCheckList items={home.no_room.pending} doneToday={today} onToggle={toggleToday} />
+                  <TaskCheckList
+                items={home.no_room.pending}
+                doneToday={today}
+                onToggle={toggleToday}
+                pushListo={pushListo}
+                onReminderChanged={trasCambiarAviso}
+                onError={setError}
+              />
                   {home.no_room.ahead.length > 0 && (
                     <Box>
                       <Button
@@ -315,7 +362,14 @@ export default function Casa() {
                     Nada pendiente hoy.
                   </Alert>
                 ) : (
-                  <TaskCheckList items={flatPending} doneToday={today} onToggle={toggleToday} />
+                  <TaskCheckList
+                    items={flatPending}
+                    doneToday={today}
+                    onToggle={toggleToday}
+                    pushListo={pushListo}
+                    onReminderChanged={trasCambiarAviso}
+                    onError={setError}
+                  />
                 )}
               </Box>
               {allAhead.length > 0 && (
@@ -384,10 +438,16 @@ function TaskCheckList({
   items,
   doneToday,
   onToggle,
+  pushListo,
+  onReminderChanged,
+  onError,
 }: {
   items: HomeItem[];
   doneToday: string;
   onToggle: (item: HomeItem) => Promise<void>;
+  pushListo: boolean;
+  onReminderChanged: (t: { id: number; notify: boolean; due_at: string | null }) => void;
+  onError: (m: string) => void;
 }) {
   if (items.length === 0) return <Alert severity="info" sx={{ borderRadius: 2 }}>Nada pendiente aquí.</Alert>;
   return (
@@ -420,6 +480,15 @@ function TaskCheckList({
                 }
               />
             </ListItemButton>
+            <ReminderToggle
+              id={item.id}
+              dia={doneOn}
+              notify={item.notify}
+              dueAt={item.due_at}
+              avisadoPorPush={pushListo}
+              onChanged={onReminderChanged}
+              onError={onError}
+            />
           </ListItem>
         );
       })}

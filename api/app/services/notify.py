@@ -136,20 +136,60 @@ def next_task_reminder_local(task: Task, now_local: datetime) -> datetime | None
 
 
 def summarize_day(tasks: list[Task], shopping: list[ShoppingItem], day: date) -> str:
-    """Texto del resumen diario: pendientes de hoy, atrasadas y compra."""
+    """Texto del resumen diario: pendientes de hoy, atrasadas y compra.
+
+    Pensado para caber en el cuerpo de una notificación del móvil, así que cuenta
+    en vez de listar: seis nombres seguidos no se leen en un banner. Si hay muy
+    poco que decir, se abre con el nombre de la tarea en vez del recuento.
+    """
     hoy = [t for t in tasks if home.task_pending(t, day) == day]
     atrasadas = [t for t in tasks if (p := home.task_pending(t, day)) is not None and p < day]
     compra = [s for s in shopping if not s.purchased]
     bits: list[str] = []
-    if hoy:
+    if len(hoy) == 1:
+        bits.append(f"1 tarea: {hoy[0].title}")
+    elif hoy:
         bits.append(f"{len(hoy)} tareas para hoy")
     if atrasadas:
         bits.append(f"{len(atrasadas)} atrasadas")
     if compra:
-        bits.append(f"{len(compra)} en la lista de la compra")
+        bits.append(f"{len(compra)} en la compra")
     if not bits:
         return "Nada pendiente: respira, todo al día."
     return " · ".join(bits)
+
+
+async def summary_text_for(db: AsyncSession, user: User, day: date) -> str:
+    """`summarize_day` con los datos de BD de ese usuario para ese día.
+
+    El texto **no** se guarda en el payload al encolar: `fill_outbox` planifica
+    con hasta 370 días de antelación, y un resumen de hoy calculado el lunes no
+    sirve el martes. Se arma aquí, en el poller, cuando ya es el día de verdad.
+    """
+    tasks = (
+        (
+            await db.execute(
+                select(Task).where(Task.user_id == user.id).options(selectinload(Task.completions))
+            )
+        )
+        .scalars()
+        .unique()
+        .all()
+    )
+    compra = list(
+        (
+            await db.execute(
+                select(ShoppingItem).where(
+                    ShoppingItem.user_id == user.id,
+                    ShoppingItem.purchased.is_(False),
+                    ShoppingItem.deleted_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return summarize_day(list(tasks), compra, day)
 
 
 async def _has_pending_ref(db: AsyncSession, user_id: int, ref: str) -> bool:
@@ -358,7 +398,15 @@ async def run_poller(db: AsyncSession, now_naive: datetime) -> dict:
             counts["cancelled"] += 1
             continue
 
-        payload = build_payload(user, row.kind, dict(row.payload or {}))
+        payload = dict(row.payload or {})
+        if row.kind == "summary":
+            # El texto del resumen se calcula aquí y no al encolar: `fill_outbox`
+            # planifica con 370 días de antelación, y el resumen de un martes
+            # calculado el lunes anterior no vale.
+            day_txt = payload.get("day")
+            dia = date.fromisoformat(day_txt) if day_txt else _aware(now_naive).astimezone(tz_of(user)).date()
+            payload["text"] = await summary_text_for(db, user, dia)
+        payload = build_payload(user, row.kind, payload)
         delivered = False
         retryable = False
         removed: list[PushSubscription] = []

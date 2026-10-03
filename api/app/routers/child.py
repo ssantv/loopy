@@ -66,6 +66,10 @@ def _config_out(conf: CheckinConfig) -> CheckinConfigOut:
 async def get_checkin_config(
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ) -> CheckinConfigOut:
+    # El guard estaba en `_require_child` pero solo se usaba en el alta rápida: un
+    # adulto podía crearse config de check-in y quedarse recibiendo el push de su
+    # propio hijo. Con la UI expuesta ya no es un caso teórico.
+    _require_child(user)
     return _config_out(await _get_config(user, db))
 
 
@@ -75,6 +79,7 @@ async def patch_checkin_config(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> CheckinConfigOut:
+    _require_child(user)
     conf = await _get_config(user, db)
     for key, value in payload.model_dump(exclude_unset=True).items():
         if value is not None:

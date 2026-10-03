@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { BOTTOM_BAR_PADDING, PageNav, SubNav } from "../components/Nav";
-import { checkinApi, subjectApi, type QuickItem, type QuickItemType, type Subject } from "../api/client";
+import { checkinApi, subjectApi, type CheckinConfig, type QuickItem, type QuickItemType, type Subject } from "../api/client";
 import Typography from "@mui/material/Typography";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -15,6 +15,9 @@ import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import Checkbox from "@mui/material/Checkbox";
+import FormGroup from "@mui/material/FormGroup";
+import Switch from "@mui/material/Switch";
+import Paper from "@mui/material/Paper";
 import List from "@mui/material/List";
 import ListItem from "@mui/material/ListItem";
 import ListItemText from "@mui/material/ListItemText";
@@ -27,6 +30,8 @@ const TYPE_LABEL: Record<QuickItemType, string> = {
   examen: "Examen",
   proyecto: "Proyecto",
 };
+
+const WEEKDAYS = ["L", "M", "X", "J", "V", "S", "D"];
 
 function todayISO(): string {
   const now = new Date();
@@ -54,6 +59,7 @@ export default function CheckIn() {
   const navigate = useNavigate();
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [toneTemplate, setToneTemplate] = useState<string | null>(null);
+  const [config, setConfig] = useState<CheckinConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,9 +78,10 @@ export default function CheckIn() {
     setLoading(true);
     setError(null);
     try {
-      const [subs, tone] = await Promise.all([subjectApi.list(), checkinApi.tone()]);
+      const [subs, tone, conf] = await Promise.all([subjectApi.list(), checkinApi.tone(), checkinApi.config()]);
       setSubjects(subs);
       setToneTemplate(tone.template);
+      setConfig(conf);
       setSubjectId((cur) => (cur === 0 && subs.length > 0 ? subs[0].id : cur));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error al cargar el check-in");
@@ -86,6 +93,14 @@ export default function CheckIn() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const patchConfig = useCallback(async (payload: Partial<CheckinConfig>) => {
+    try {
+      setConfig(await checkinApi.patchConfig(payload));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error al guardar");
+    }
+  }, []);
 
   const currentValid = useMemo(() => {
     if (type === "deber" || type === "proyecto") return title.trim().length > 0;
@@ -164,6 +179,53 @@ export default function CheckIn() {
           <Alert severity="info" sx={{ mb: 2, borderRadius: 2 }}>
             Cuando te pregunte, será: «{toneTemplate}»
           </Alert>
+        )}
+        {config && (
+          <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+            <Typography variant="h6" sx={{ mb: 1 }}>
+              Cuándo te pregunto
+            </Typography>
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1, flexWrap: "wrap" }}>
+              <FormControlLabel
+                control={<Switch checked={config.enabled} onChange={(ev) => void patchConfig({ enabled: ev.target.checked })} />}
+                label="Preguntarte"
+              />
+              <TextField
+                label="Hora"
+                type="time"
+                size="small"
+                value={config.time.slice(0, 5)}
+                onChange={(ev) => {
+                  if (ev.target.value) void patchConfig({ time: `${ev.target.value}:00` });
+                }}
+                slotProps={{ inputLabel: { shrink: true } }}
+              />
+            </Stack>
+            <FormGroup row>
+              {WEEKDAYS.map((label, i) => (
+                <FormControlLabel
+                  key={i}
+                  control={
+                    <Checkbox
+                      checked={(config.week_mask & (1 << i)) !== 0}
+                      onChange={(ev) => {
+                        const mask = ev.target.checked
+                          ? config.week_mask | (1 << i)
+                          : config.week_mask & ~(1 << i);
+                        void patchConfig({ week_mask: mask });
+                      }}
+                    />
+                  }
+                  label={label}
+                />
+              ))}
+            </FormGroup>
+            {config.week_mask === 0 && (
+              <Alert severity="warning" sx={{ mt: 1, borderRadius: 2 }}>
+                No hay ningún día marcado: no te preguntaré nunca.
+              </Alert>
+            )}
+          </Paper>
         )}
         {error && (
           <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>

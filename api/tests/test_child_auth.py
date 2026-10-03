@@ -384,3 +384,47 @@ async def test_dos_ninos_mismo_nombre_y_pin_se_trata_como_fallo(env):
     # Con un PIN distinto sí desambigua: solo una cuenta coincide.
     r2 = await env.client.post("/api/auth/child-login", json={"display_name": "Gemelo", "pin": "0000"})
     assert r2.status_code == 401
+
+
+# --------------------------------------------------------------------------
+# La config del check-in es del niño, no del adulto
+# --------------------------------------------------------------------------
+
+
+async def test_el_adulto_no_puede_tocar_la_config_del_checkin(env):
+    # Sin el guard, un adulto podía crearse su propia config de check-in y
+    # `fill_outbox` le encolaba el push como si fuera el niño que tiene que hacer
+    # los deberes. La UI acaba de exponer este endpoint, así que el agujero ya no
+    # es un detalle de API.
+    token_adulto = await _registrar_adulto(env)
+    cabeceras = {"Authorization": f"Bearer {token_adulto}"}
+
+    r = await env.client.get("/api/checkin/config", headers=cabeceras)
+    assert r.status_code == 403
+
+    r = await env.client.patch("/api/checkin/config", json={"time": "09:00:00"}, headers=cabeceras)
+    assert r.status_code == 403
+
+
+async def test_el_nino_puede_configurar_su_checkin(env):
+    token_adulto = await _registrar_adulto(env)
+    await _crear_nino(env, token_adulto)
+    r = await env.client.post("/api/auth/child-login", json={"display_name": CHILD_NAME, "pin": CHILD_PIN})
+    assert r.status_code == 200, r.text
+    cabeceras = {"Authorization": f"Bearer {r.json()['token']}"}
+
+    # Por defecto: todos los días a las 20:00.
+    r = await env.client.get("/api/checkin/config", headers=cabeceras)
+    assert r.status_code == 200
+    assert r.json() == {"enabled": True, "time": "20:00:00", "week_mask": 127}
+
+    r = await env.client.patch(
+        "/api/checkin/config", json={"time": "19:30:00", "week_mask": 0b0011110}, headers=cabeceras
+    )
+    assert r.status_code == 200
+    assert r.json()["time"] == "19:30:00"
+    assert r.json()["week_mask"] == 0b0011110
+
+    # Y el PATCH es parcial: tocar solo la máscara no debe resetear la hora.
+    r = await env.client.patch("/api/checkin/config", json={"week_mask": 127}, headers=cabeceras)
+    assert r.json()["time"] == "19:30:00"

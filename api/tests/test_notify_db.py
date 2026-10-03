@@ -19,6 +19,9 @@ from app.services import notify as N
 
 NOW = datetime(2026, 9, 20, 9, 0)  # domingo 09:00 UTC â†’ Madrid 11:00
 
+# Lo que se intentó enviar en cada llamada, para poder afirmar sobre el payload.
+enviados: list[dict] = []
+
 
 class _Resp:
     def __init__(self, status_code: int) -> None:
@@ -35,6 +38,7 @@ async def _session(monkeypatch=None, send_raises=None):
     maker = await make_session_factory()
     if monkeypatch is not None:
         async def _fake_send(sub, payload, _raises=send_raises):
+            enviados.append(payload)
             if _raises is not None:
                 raise _raises
         monkeypatch.setattr(N, "_send_push", _fake_send)
@@ -218,3 +222,57 @@ async def test_poller_no_envia_sino_vencido(monkeypatch):
         row = (await db.execute(select(NotificationOutbox))).scalars().one()
         assert row.status == "pending"
         assert row.sent_at is None
+
+
+@pytest.mark.asyncio
+async def test_poller_mete_el_resumen_real_en_el_push(monkeypatch):
+    """El push de resumen debe decir cuántas tareas hay, no la fecha.
+
+    Regresión: `fill_outbox` planifica con 370 días de antelación, así que el
+    texto no puede calcularse al encolar. Si vuelve a calcularse allí, el usuario
+    recibe "Resumen del día: 2026-09-27 en Loopy" un día que no es.
+    """
+    maker = await _session(monkeypatch=monkeypatch)
+    user_id, _ = await _seed_user(maker)
+    async with maker() as db:
+        db.add(
+            NotificationOutbox(
+                user_id=user_id, kind="summary", due_at=NOW, ref="summary",
+                # Sin `text`: eso es justo lo que tiene que poner el poller.
+                payload={"day": "2026-09-20", "url": "/"}, status="pending", attempts=0,
+            )
+        )
+        db.add(Task(user_id=user_id, category="deber", title="Matemáticas", due_on=NOW.date(), notify=False))
+        db.add(Task(user_id=user_id, category="deber", title="Lengua", due_on=NOW.date(), notify=False))
+        await db.commit()
+
+    async with maker() as db:
+        counts = await N.run_poller(db, NOW)
+        await db.commit()
+    assert counts["sent"] == 1
+    assert enviados[-1]["body"] == "2 tareas para hoy"
+
+    # Y la fila enviada guarda su payload original: el texto es de este instante.
+    async with maker() as db:
+        row = (await db.execute(select(NotificationOutbox))).scalars().one()
+        assert row.status == "sent"
+        assert "text" not in (row.payload or {})
+
+
+@pytest.mark.asyncio
+async def test_poller_resumen_sin_tareas_dice_que_no_hay_nada(monkeypatch):
+    maker = await _session(monkeypatch=monkeypatch)
+    user_id, _ = await _seed_user(maker)
+    async with maker() as db:
+        db.add(
+            NotificationOutbox(
+                user_id=user_id, kind="summary", due_at=NOW, ref="summary",
+                payload={"day": "2026-09-20", "url": "/"}, status="pending", attempts=0,
+            )
+        )
+        await db.commit()
+
+    async with maker() as db:
+        await N.run_poller(db, NOW)
+        await db.commit()
+    assert "Nada pendiente" in enviados[-1]["body"]
