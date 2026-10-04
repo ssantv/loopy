@@ -7,18 +7,26 @@ export default async function run(page, ui) {
   const failed = [];
   page.on("requestfailed", (r) => failed.push(`${r.method()} ${r.url()} :: ${r.failure()?.errorText}`));
 
-  const snap = await ui.snapshot();
-  const email = snap.match(/@(e\d+) textbox/)?.[1];
+  // Por etiqueta y no por posición: el segundo textbox puede no haber pintado
+  // todavía y `fill(undefined)` reventaba con "ref desconocida: undefined".
+  const ref = async (pat) => {
+    for (let intento = 0; intento < 20; intento++) {
+      const id = (await ui.snapshot()).match(pat)?.[1];
+      if (id) return id;
+      await page.waitForTimeout(250);
+    }
+    return null;
+  };
+
+  const email = await ref(/@(e\d+) textbox "Email"/);
   await ui.fill(email, "prueba@prueba.es");
   await page.waitForTimeout(200);
 
-  const snap2 = await ui.snapshot();
-  const pwd = [...snap2.matchAll(/@(e\d+) textbox/g)][1]?.[1];
+  const pwd = await ref(/@(e\d+) textbox "Contrase\u00f1a"/);
   await ui.fill(pwd, "12345678");
   await page.waitForTimeout(200);
 
-  const snap3 = await ui.snapshot();
-  const entrar = snap3.match(/@(e\d+) button "ENTRAR"/)?.[1];
+  const entrar = await ref(/@(e\d+) button "ENTRAR"/);
   await ui.click(entrar);
   await page.waitForTimeout(2000);
 
