@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import adult, auth, child, extras, menu, pending, push, schedule, school, tasks
+from app.routers import adult, appointment, auth, child, day, extras, menu, pending, push, schedule, school, tasks
 from app.services.notify import notify_loop
 
 
@@ -45,6 +45,8 @@ app.include_router(adult.router)
 app.include_router(push.router)
 app.include_router(pending.router)
 app.include_router(menu.router)
+app.include_router(appointment.router)
+app.include_router(day.router)
 
 
 @app.get("/api/health")

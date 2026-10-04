@@ -58,7 +58,18 @@ class StudyCompletion(Base):
 
 
 class Extracurricular(Base):
-    """Actividad extraescolar: solo contexto (timeline) + entrada del heurístico de carga."""
+    """Actividad extraescolar: solo contexto (timeline) + entrada del heurístico de carga.
+
+    `affects_parent` distingue las dos situaciones reales de una extraescolar:
+
+    - **Solo del niño**: música por videollamada, los deberes de tarde. Bloquea
+      el día del niño y al adulto no le toca nada.
+    - **Compartida con el adulto**: hay que llevarle o pasar de ruta. Bloquea los
+      dos días, que es lo que hace que el día del adulto deje de tener hueco.
+
+    Sin esta columna la app asumía que toda extraescolar es del niño sola, y el día
+    del adulto salía libre cuando en realidad estaba ocupado.
+    """
 
     __tablename__ = "extracurriculars"
 
@@ -70,6 +81,9 @@ class Extracurricular(Base):
     end_time: Mapped[time] = mapped_column(Time, nullable=False)
     start_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     end_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # False por defecto porque es el caso mayoritario y el que no cambia el
+    # comportamiento de lo ya creado: una extraescolar que no dice nada es del niño.
+    affects_parent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

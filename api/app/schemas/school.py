@@ -102,6 +102,9 @@ class ExtracurricularCreate(BaseModel):
     end_time: time
     start_on: date | None = None
     end_on: date | None = None
+    # Si hay que llevar al niño, la actividad también bloquea el día del adulto.
+    # False por defecto: lo mayoritario es que el adulto no la sufra.
+    affects_parent: bool = False
 
 
 class ExtracurricularUpdate(BaseModel):
@@ -111,6 +114,7 @@ class ExtracurricularUpdate(BaseModel):
     end_time: time | None = None
     start_on: date | None = None
     end_on: date | None = None
+    affects_parent: bool | None = None
 
 
 class ExtracurricularOut(BaseModel):
@@ -121,6 +125,7 @@ class ExtracurricularOut(BaseModel):
     end_time: time
     start_on: date | None
     end_on: date | None
+    affects_parent: bool
 
 
 # ------------------------------------------------------- horario y días sin cole
@@ -247,6 +252,10 @@ class DayLoadOut(BaseModel):
     over_cap_minutes: int
     unplaced_study_minutes: int
     exams_pending: int
+    # Desglose de `blocked_minutes`: qué parte son extraescolares y qué parte citas.
+    extracurricular_minutes: int = 0
+    appointment_minutes: int = 0
+    appointments_count: int = 0
 
 
 # ---------------------------------------------------------------- check-in

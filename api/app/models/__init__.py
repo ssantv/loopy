@@ -1,6 +1,7 @@
 """Modelos ORM. Importar aquí todos los modelos para que Alembic los descubra."""
 
 from app.models.adult import DailySummaryConfig, ShoppingItem, SummaryException
+from app.models.appointment import Appointment, AppointmentPerson
 from app.models.menu import (
     CategoryGoal,
     MealPlan,
@@ -51,4 +52,6 @@ __all__ = [
     "Recipe",
     "RecipeIngredient",
     "MealPlan",
+    "Appointment",
+    "AppointmentPerson",
 ]

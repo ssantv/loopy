@@ -8,7 +8,15 @@ import {
   urlBase64ToUint8Array,
   subjectApi,
   dayLoadApi,
+  dayTimelineApi,
+  appointmentApi,
+  api,
   type DayLoad,
+  type DayTimeline,
+  type DayBlock,
+  type Appointment,
+  type AppointmentInput,
+  type User,
   type Exam,
   type Task,
   examApi,
@@ -29,6 +37,8 @@ import ListItemSecondaryAction from "@mui/material/ListItemSecondaryAction";
 import Chip from "@mui/material/Chip";
 import Collapse from "@mui/material/Collapse";
 import Alert from "@mui/material/Alert";
+import FormControlLabel from "@mui/material/FormControlLabel";
+import TextField from "@mui/material/TextField";
 import CircularProgress from "@mui/material/CircularProgress";
 import IconButton from "@mui/material/IconButton";
 import Stack from "@mui/material/Stack";
@@ -170,6 +180,20 @@ export default function Home() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkMsg, setBulkMsg] = useState<string | null>(null);
   const [carga, setCarga] = useState<DayLoad | null>(null);
+  const [timeline, setTimeline] = useState<DayTimeline | null>(null);
+  const [citas, setCitas] = useState<Appointment[]>([]);
+  const [citaDialog, setCitaDialog] = useState<CitaDialogState | null>(null);
+  const [ninos, setNinos] = useState<User[]>([]);
+
+  // Los niños solo hacen falta para poder elegir a quién afecta una cita, y solo
+  // se piden si quien mira la pantalla es un adulto: un niño no crea citas.
+  useEffect(() => {
+    if (isChild) return;
+    void api
+      .children()
+      .then(setNinos)
+      .catch(() => setNinos([]));
+  }, [isChild]);
 
   const today = useMemo(todayISO, []);
 
@@ -181,6 +205,22 @@ export default function Home() {
       setCarga(await dayLoadApi.get(today));
     } catch {
       setCarga(null);
+    }
+  }, [today]);
+
+  // El timeline y las citas del día van en la misma pasada porque se necesitan los
+  // dos para pintar la sección: el bloque dice qué ocupa el rato, y la cita
+  // completa es la única que trae `repeats_weekly`, `until` y las notas, que hacen
+  // falta para editarla sin perder nada. Si fallara uno, la sección no se enseña
+  // antes que el resto de Mi día: es información extra, no el motivo de abrir la app.
+  const loadDia = useCallback(async () => {
+    try {
+      const [tl, cs] = await Promise.all([dayTimelineApi.get(today), appointmentApi.day(today)]);
+      setTimeline(tl);
+      setCitas(cs);
+    } catch {
+      setTimeline(null);
+      setCitas([]);
     }
   }, [today]);
 
@@ -214,8 +254,9 @@ export default function Home() {
       // mismo que se acaba de cambiar: marcar una tarea como hecha o añadir una
       // sesión de estudio la deja obsoleta si no se vuelve a pedir.
       void loadCarga();
+      void loadDia();
     }
-  }, [today, isChild, loadCarga]);
+  }, [today, isChild, loadCarga, loadDia]);
 
   useEffect(() => {
     void load();
@@ -339,6 +380,37 @@ export default function Home() {
     }
   }, [groups.hoy, load]);
 
+  const citasPorId = useMemo(() => new Map(citas.map((c) => [c.id, c])), [citas]);
+
+  const guardarCita = useCallback(
+    async (estado: CitaDialogState, cuerpo: AppointmentInput) => {
+      try {
+        if (estado.cita) await appointmentApi.update(estado.cita.id, cuerpo);
+        else await appointmentApi.create(cuerpo);
+        setCitaDialog(null);
+        // El timeline y la carga comparten los minutos de la cita, así que los dos
+        // quedan obsoletos en el mismo instante. Recargar solo uno dejaría la pantalla
+        // diciendo dos cosas distintas sobre el mismo día.
+        await Promise.all([loadDia(), loadCarga()]);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Error al guardar la cita");
+      }
+    },
+    [loadCarga, loadDia],
+  );
+
+  const borrarCita = useCallback(
+    async (id: number) => {
+      try {
+        await appointmentApi.remove(id);
+        await Promise.all([loadDia(), loadCarga()]);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Error al borrar la cita");
+      }
+    },
+    [loadCarga, loadDia],
+  );
+
   const abrirTemporizador = useCallback((focus: Focus) => {
     setTimerTarget({
       focus,
@@ -456,6 +528,17 @@ export default function Home() {
         ) : (
           <Stack spacing={3}>
             {carga && <CargaDelDia carga={carga} />}
+
+            {timeline && (
+              <TimelineDelDia
+                timeline={timeline}
+                citas={citasPorId}
+                esAdulto={!isChild}
+                onNueva={() => setCitaDialog({ cita: null, fecha: today })}
+                onEditar={(c) => setCitaDialog({ cita: c, fecha: today })}
+                onBorrar={(id) => void borrarCita(id)}
+              />
+            )}
 
             {focus && (
           <FocusCard
@@ -680,6 +763,15 @@ export default function Home() {
         onClose={() => setTimerTarget(null)}
         onFinish={(plan, real, marcar) => void cerrarTemporizador(plan, real, marcar)}
       />
+
+      {citaDialog && (
+        <CitaDialog
+          estado={citaDialog}
+          ninos={ninos}
+          onClose={() => setCitaDialog(null)}
+          onSave={(cuerpo) => void guardarCita(citaDialog, cuerpo)}
+        />
+      )}
     </Box>
   );
 }
@@ -764,7 +856,21 @@ function CargaDelDia({ carga }: { carga: DayLoad }) {
   const partes: string[] = [];
   if (carga.task_minutes > 0) partes.push(`${minutosLegibles(carga.task_minutes)} de tareas`);
   if (carga.study_minutes > 0) partes.push(`${minutosLegibles(carga.study_minutes)} de estudio`);
-  if (carga.blocked_minutes > 0) partes.push(`${minutosLegibles(carga.blocked_minutes)} de extraescolar`);
+  if (carga.blocked_minutes > 0) {
+    // Los minutos bloqueados son de dos cosas distintas y conviene nombrarlas: un
+    // bloque que dice "de extraescolar" cuando incluye el dentista del niño está
+    // mintiendo sobre lo que ocupa el día.
+    const ocupaciones: string[] = [];
+    if (carga.extracurricular_minutes > 0) ocupaciones.push(`${minutosLegibles(carga.extracurricular_minutes)} de extraescolar`);
+    if (carga.appointment_minutes > 0) {
+      ocupaciones.push(
+        `${minutosLegibles(carga.appointment_minutes)} de citas${
+          carga.appointments_count > 0 ? ` (${carga.appointments_count})` : ""
+        }`,
+      );
+    }
+    partes.push(ocupaciones.join(" y "));
+  }
 
   const noCabe = carga.unplaced_study_minutes > 0;
   if (!partes.length && !noCabe) return null;
@@ -1322,5 +1428,359 @@ function PushSection() {
         </Typography>
       )}
     </section>
+  );
+}
+/** Estado del diálogo de citas: `cita` a null es una cita nueva. */
+interface CitaDialogState {
+  cita: Appointment | null;
+  fecha: string;
+}
+
+/** Una fila de la línea: o un hueco o un bloque que lo ocupa. */
+type Linea =
+  | { tipo: "hueco"; key: string; inicio: string; fin: string; minutos: number }
+  | { tipo: "bloque"; key: string; bloque: DayBlock };
+
+const BLOCK_LABEL: Record<string, string> = {
+  cita: "Cita",
+  extraescolar: "Extraescolar",
+  extraescolar_compartida: "Llevar a",
+  comida: "Comida",
+};
+
+const BLOCK_COLOR: Record<string, string> = {
+  cita: "#c62828",
+  extraescolar: "#6a1b9a",
+  extraescolar_compartida: "#ef6c00",
+  comida: "#558b2f",
+};
+
+/**
+ * La segunda línea de un bloque. En las comidas manda la franja y no el tipo:
+ * "Merienda" y "Desayuno" se distinguen por la hora, pero el nombre de la franja es
+ * lo que el usuario activó y lo que espera leer.
+ */
+function etiquetaDe(b: DayBlock): string {
+  if (b.kind === "comida" && b.slot) return b.slot.charAt(0).toUpperCase() + b.slot.slice(1);
+  return BLOCK_LABEL[b.kind] ?? b.kind;
+}
+
+/** "09:00:00" -> "09:00". El backend siempre devuelve segundos. */
+function hhmm(hora: string): string {
+  return hora.slice(0, 5);
+}
+
+/**
+ * La línea del día: lo que está ocupado, en orden, y el hueco que queda.
+ *
+ * Los bloques no se solapan nunca en la respuesta, pero dos hermanos en la misma
+ * actividad sí se muestran por separado: son dos viajes que nombrar, aunque para
+ * el cálculo de minutos se unan en uno.
+ */
+function TimelineDelDia({
+  timeline,
+  citas,
+  esAdulto,
+  onNueva,
+  onEditar,
+  onBorrar,
+}: {
+  timeline: DayTimeline;
+  /** Las citas completas de hoy, por id. El bloque solo trae el id. */
+  citas: Map<number, Appointment>;
+  esAdulto: boolean;
+  onNueva: () => void;
+  onEditar: (c: Appointment) => void;
+  onBorrar: (id: number) => void;
+}) {
+  // Una sola lista mezclando huecos y bloques, en orden de hora. Separarlos en
+  // "ocupaciones" y "citas" era más fácil de montar, pero obligaba a leer dos
+  // listas para saber si a las seis de la tarde había algo libre: el hueco es
+  // justo lo que se pierde al ordenar por tipo.
+  const lineas = useMemo(() => {
+    const items: Linea[] = [
+      ...(timeline.huecos ?? []).map((h, i) => ({
+        tipo: "hueco" as const,
+        key: `hueco-${i}-${h.start}`,
+        inicio: h.start,
+        fin: h.end,
+        minutos: h.minutes,
+      })),
+      ...timeline.blocks.map((b) => ({
+        tipo: "bloque" as const,
+        key: `bloque-${b.kind}-${b.cita_id ?? b.extra_id ?? b.slot ?? b.title}-${b.start}`,
+        bloque: b,
+      })),
+    ];
+    const hora = (l: Linea) => (l.tipo === "hueco" ? l.inicio : l.bloque.start);
+    // Las "HH:MM:SS" se comparan como texto y ordenan bien: mismo formato, mismo
+    // ancho, y los huecos empiezan siempre en punto.
+    items.sort((a, b) => (hora(a) < hora(b) ? -1 : hora(a) > hora(b) ? 1 : 0));
+    return items;
+  }, [timeline]);
+
+  return (
+    <section>
+      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+        <Typography variant="h6" sx={{ flexGrow: 1 }}>
+          Tu línea del día
+        </Typography>
+        {esAdulto && (
+          <Button size="small" variant="outlined" onClick={onNueva}>
+            + Cita
+          </Button>
+        )}
+      </Stack>
+
+      {lineas.length === 0 ? (
+        <Alert severity="success" sx={{ borderRadius: 2 }}>
+          Nada ocupa el día.
+        </Alert>
+      ) : (
+        <List sx={{ p: 0 }}>
+          {lineas.map((l) =>
+            l.tipo === "hueco" ? (
+              <HuecoRow key={l.key} inicio={l.inicio} fin={l.fin} minutos={l.minutos} />
+            ) : (
+              <DayBlockRow
+                key={l.key}
+                block={l.bloque}
+                esSemanal={l.bloque.cita_id !== null && citas.get(l.bloque.cita_id)?.repeats_weekly === true}
+                onEditar={
+                  esAdulto && l.bloque.cita_id !== null && citas.has(l.bloque.cita_id)
+                    ? () => onEditar(citas.get(l.bloque.cita_id as number) as Appointment)
+                    : undefined
+                }
+                onBorrar={esAdulto && l.bloque.cita_id ? () => onBorrar(l.bloque.cita_id as number) : undefined}
+              />
+            ),
+          )}
+        </List>
+      )}
+    </section>
+  );
+}
+
+/** Una franja sin nada encima: el rato donde sí se puede colocar algo. */
+function HuecoRow({ inicio, fin, minutos }: { inicio: string; fin: string; minutos: number }) {
+  return (
+    <ListItem disableGutters>
+      <Box sx={{ display: "flex", gap: 1, alignItems: "baseline", width: "100%" }}>
+        <Box sx={{ width: 4, alignSelf: "stretch", bgcolor: "#c5e1a5", borderRadius: 2, minHeight: 34 }} />
+        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+          <Typography variant="body2" sx={{ fontWeight: 600 }} noWrap>
+            {hhmm(inicio)}–{hhmm(fin)} · Libre
+          </Typography>
+          <Typography variant="caption" color="text.secondary" noWrap>
+            Hueco para colocar algo
+          </Typography>
+        </Box>
+        <Typography variant="caption" color="text.secondary">
+          {minutosLegibles(minutos)}
+        </Typography>
+      </Box>
+    </ListItem>
+  );
+}
+
+function DayBlockRow({
+  block,
+  esSemanal,
+  onEditar,
+  onBorrar,
+}: {
+  block: DayBlock;
+  esSemanal?: boolean;
+  onEditar?: () => void;
+  onBorrar?: () => void;
+}) {
+  const color = BLOCK_COLOR[block.kind] ?? "#616161";
+  const etiqueta = block.affected.length > 0 ? ` · ${block.affected.join(", ")}` : "";
+  return (
+    <ListItem
+      disableGutters
+      secondaryAction={
+        onEditar || onBorrar ? (
+          <ListItemSecondaryAction>
+            {onEditar && (
+              <Button size="small" onClick={onEditar} aria-label={`Editar ${block.title}`}>
+                Editar
+              </Button>
+            )}
+            {onBorrar && (
+              <Button size="small" color="error" onClick={onBorrar} aria-label={`Borrar ${block.title}`}>
+                Borrar
+              </Button>
+            )}
+          </ListItemSecondaryAction>
+        ) : undefined
+      }
+    >
+      <Box sx={{ display: "flex", gap: 1, alignItems: "baseline", width: "100%", pr: onEditar || onBorrar ? 14 : 0 }}>
+        <Box
+          sx={{
+            width: 4,
+            alignSelf: "stretch",
+            bgcolor: color,
+            borderRadius: 2,
+            minHeight: 34,
+          }}
+        />
+        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+          <Typography variant="body2" sx={{ fontWeight: 600 }} noWrap>
+            {hhmm(block.start)}–{hhmm(block.end)} · {block.title}
+          </Typography>
+          <Typography variant="caption" color="text.secondary" noWrap>
+            {etiquetaDe(block)}
+            {esSemanal ? " · cada semana" : ""}
+            {etiqueta}
+            {block.place ? ` · ${block.place}` : ""}
+          </Typography>
+        </Box>
+        <Typography variant="caption" color="text.secondary">
+          {minutosLegibles(block.minutes)}
+        </Typography>
+      </Box>
+    </ListItem>
+  );
+}
+
+/**
+ * Alta y edición de citas.
+ *
+ * El adulto que guarda es siempre afectado y por eso no aparece en la lista: solo se
+ * elige a quién más le afecta. Si no se marca a nadie, la cita es solo suya.
+ */
+function CitaDialog({
+  estado,
+  ninos,
+  onClose,
+  onSave,
+}: {
+  estado: CitaDialogState;
+  ninos: User[];
+  onClose: () => void;
+  onSave: (cuerpo: AppointmentInput) => void;
+}) {
+  const editando = estado.cita !== null;
+  const [titulo, setTitulo] = useState(estado.cita?.title ?? "");
+  const [lugar, setLugar] = useState(estado.cita?.place ?? "");
+  const [fecha, setFecha] = useState(estado.cita?.date ?? estado.fecha);
+  const [desde, setDesde] = useState(hhmm(estado.cita?.start_time ?? "17:00"));
+  const [hasta, setHasta] = useState(hhmm(estado.cita?.end_time ?? "18:00"));
+  const [repite, setRepite] = useState(estado.cita?.repeats_weekly ?? false);
+  const [hastaFecha, setHastaFecha] = useState(estado.cita?.until ?? "");
+  const [afectados, setAfectados] = useState<number[]>(
+    estado.cita?.affected.map((p) => p.id).filter((id) => id > 0) ?? [],
+  );
+
+  const alternar = (id: number) =>
+    setAfectados((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  const guardar = () => {
+    onSave({
+      title: titulo.trim(),
+      place: lugar.trim() ? lugar.trim() : null,
+      date: fecha,
+      start_time: desde,
+      end_time: hasta,
+      repeats_weekly: repite,
+      until: repite && hastaFecha ? hastaFecha : null,
+      affected_user_ids: afectados,
+    });
+  };
+
+  const invalido = titulo.trim() === "" || desde >= hasta;
+
+  return (
+    <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>{editando ? "Editar cita" : "Nueva cita"}</DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} sx={{ mt: 0.5 }}>
+          <TextField
+            label="Qué es"
+            value={titulo}
+            onChange={(e) => setTitulo(e.target.value)}
+            autoFocus
+            fullWidth
+          />
+          <TextField label="Dónde" value={lugar} onChange={(e) => setLugar(e.target.value)} fullWidth />
+
+          <TextField
+            label="Día"
+            type="date"
+            value={fecha}
+            onChange={(e) => setFecha(e.target.value)}
+            InputLabelProps={{ shrink: true }}
+            fullWidth
+          />
+
+          <Stack direction="row" spacing={2}>
+            <TextField
+              label="Desde"
+              type="time"
+              value={desde}
+              onChange={(e) => setDesde(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              fullWidth
+            />
+            <TextField
+              label="Hasta"
+              type="time"
+              value={hasta}
+              onChange={(e) => setHasta(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              fullWidth
+            />
+          </Stack>
+
+          <FormControlLabel
+            control={<Checkbox checked={repite} onChange={(e) => setRepite(e.target.checked)} />}
+            label="Cada semana"
+          />
+          {repite && (
+            <TextField
+              label="Hasta qué día (opcional)"
+              type="date"
+              value={hastaFecha}
+              onChange={(e) => setHastaFecha(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              fullWidth
+              helperText="Si lo dejas vacío, no tiene final."
+            />
+          )}
+
+          {ninos.length > 0 && (
+            <Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                A quién más le afecta
+              </Typography>
+              {ninos.map((n) => (
+                <FormControlLabel
+                  key={n.id}
+                  control={
+                    <Checkbox
+                      checked={afectados.includes(n.id)}
+                      onChange={() => alternar(n.id)}
+                      inputProps={{ "aria-label": n.display_name ?? `Niño ${n.id}` }}
+                    />
+                  }
+                  label={n.display_name ?? `Niño ${n.id}`}
+                />
+              ))}
+              <Typography variant="caption" color="text.secondary">
+                Si no marcas a nadie, la cita es solo tuya.
+              </Typography>
+            </Box>
+          )}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Cancelar</Button>
+        <Button variant="contained" onClick={guardar} disabled={invalido}>
+          Guardar
+        </Button>
+      </DialogActions>
+    </Dialog>
   );
 }

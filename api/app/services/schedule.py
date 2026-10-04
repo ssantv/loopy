@@ -27,12 +27,25 @@ from datetime import date, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Extracurricular, OffDay, ScheduleSlot
+from app.models import Extracurricular, OffDay, ScheduleSlot, User
 
 # Tope de búsqueda al Walkar días hacia atrás/adelante. Con el tope de carga
 # una ventana de 2 años es más que de sobra y evita bucles infinitos si un
 # horario quedara mal configurado.
 MAX_LOOKAHEAD_DAYS = 730
+
+
+def extra_activa_on(extra: Extracurricular, day: date) -> bool:
+    """¿La extraescolar existe ya en `day`? Solo mira el rango de fechas.
+
+    El día de la semana lo comprueba quien llama, porque aquí solo interesa la
+    pregunta "empezó y no ha terminado".
+    """
+    if extra.start_on and day < extra.start_on:
+        return False
+    if extra.end_on and day > extra.end_on:
+        return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -121,11 +134,7 @@ class SchoolCalendar:
 
     @staticmethod
     def _extra_active_on(extra: Extracurricular, day: date) -> bool:
-        if extra.start_on and day < extra.start_on:
-            return False
-        if extra.end_on and day > extra.end_on:
-            return False
-        return True
+        return extra_activa_on(extra, day)
 
     # ------------------------------------------------------------ extraescolares de hoy
 
@@ -157,6 +166,34 @@ async def load_school_calendar(db: AsyncSession, user_id: int) -> SchoolCalendar
         off_ranges=tuple((o.start_on, o.end_on) for o in off),
         extracurriculars=tuple(extras),
     )
+
+
+async def extras_compartidas_de(db: AsyncSession, parent_id: int, day: date) -> list[Extracurricular]:
+    """Extraescolares de los hijos de `parent_id` que además le ocupan a él ese día.
+
+    Solo las marcadas con `affects_parent`. Sin ese filtro entrarían todas, y el
+    día del adulto se llenaría con lo que hacen los niños solos: la música por
+    videollamada no le quita ni un minuto a quien está en casa.
+
+    Para un niño esto devuelve siempre vacío (busca usuarios cuyo `parent_id` sea
+    el suyo, y un niño no es padre de nadie), así que el mismo camino sirve para
+    los dos perfiles sin comprobar `profile_type`.
+    """
+    hijos = (await db.execute(select(User.id).where(User.parent_id == parent_id))).scalars().all()
+    if not hijos:
+        return []
+    extras = (
+        await db.execute(
+            select(Extracurricular)
+            .where(
+                Extracurricular.user_id.in_(hijos),
+                Extracurricular.affects_parent.is_(True),
+                Extracurricular.day_of_week == day.weekday(),
+            )
+            .order_by(Extracurricular.start_time)
+        )
+    ).scalars().all()
+    return [e for e in extras if extra_activa_on(e, day)]
 
 
 def school_calendar(

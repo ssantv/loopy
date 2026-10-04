@@ -438,6 +438,9 @@ async def day_load(
         over_cap_minutes=carga.over_cap_minutes,
         unplaced_study_minutes=carga.unplaced_study_minutes,
         exams_pending=carga.exams_pending,
+        extracurricular_minutes=carga.extracurricular_minutes,
+        appointment_minutes=carga.appointment_minutes,
+        appointments_count=carga.appointments_count,
     )
 
 

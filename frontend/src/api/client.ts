@@ -376,6 +376,23 @@ export interface Extracurricular {
   end_time: string;
   start_on: string | null;
   end_on: string | null;
+  /** Si hay que llevar al niño, la actividad también ocupa el día del adulto. */
+  affects_parent: boolean;
+}
+
+/**
+ * Alta de extraescolar. `day_of_week`: 0 = lunes .. 6 = domingo, igual que en el
+ * backend. Las horas llegan como "HH:MM:SS" al leer, pero se pueden mandar como
+ * "HH:MM": es lo que da un `<input type="time">` y el backend lo acepta igual.
+ */
+export interface ExtracurricularInput {
+  name: string;
+  day_of_week: number;
+  start_time: string;
+  end_time: string;
+  start_on?: string | null;
+  end_on?: string | null;
+  affects_parent: boolean;
 }
 
 export interface WorkSession {
@@ -494,6 +511,10 @@ export interface DayLoad {
   over_cap_minutes: number;
   unplaced_study_minutes: number;
   exams_pending: number;
+  /** Reparto de `blocked_minutes`: extraescolares (propias y compartidas) y citas. */
+  extracurricular_minutes: number;
+  appointment_minutes: number;
+  appointments_count: number;
 }
 
 export const dayLoadApi = {
@@ -503,6 +524,108 @@ export const dayLoadApi = {
   },
 };
 
+/** Tipos de bloque, con los mismos valores que el backend. */
+export const BLOCK_CITA = "cita";
+export const BLOCK_EXTRAESCOLAR = "extraescolar";
+export const BLOCK_COMPARTIDA = "extraescolar_compartida";
+export const BLOCK_COMIDA = "comida";
+
+export interface DayBlock {
+  kind: string;
+  title: string;
+  /** "HH:MM:SS". Para pintar, `slice(0, 5)`. */
+  start: string;
+  end: string;
+  minutes: number;
+  place: string | null;
+  /** A quién le afecta además del usuario: niños de la cita, o el niño a llevar. */
+  affected: string[];
+  cita_id: number | null;
+  extra_id: number | null;
+  /** Solo en comidas: "desayuno", "cena"… Distingue merienda de desayuno. */
+  slot: string | null;
+}
+
+/** Un tramo del horario en juego que no cubre ningún bloque. */
+export interface Hueco {
+  start: string;
+  end: string;
+  minutes: number;
+}
+
+export interface DayTimeline {
+  date: string;
+  blocks: DayBlock[];
+  /** El mismo número que `day-load`. Si difieren, alguno miente. */
+  blocked_minutes: number;
+  /**
+   * Suma de `huecos`, y **no** es la ventana menos `blocked_minutes`: las comidas
+   * parten los huecos pero no se cobran contra el tiempo de estudio.
+   */
+  free_minutes: number;
+  huecos: Hueco[];
+}
+
+export const dayTimelineApi = {
+  get: (date?: string) => {
+    const qs = date ? `?date=${date}` : "";
+    return request<DayTimeline>(`/api/day-timeline${qs}`);
+  },
+};
+
+/** Persona a la que además le afecta una cita. Siempre son niños de la cuenta. */
+export interface AppointmentPerson {
+  id: number;
+  display_name: string;
+}
+
+export interface Appointment {
+  id: number;
+  owner_id: number;
+  title: string;
+  place: string | null;
+  notes: string | null;
+  /** Día de la primera ocurrencia. En una semanal, solo el lunes inicial. */
+  date: string;
+  /** "HH:MM:SS". El backend devuelve segundos siempre; para pintar, `slice(0, 5)`. */
+  start_time: string;
+  end_time: string;
+  repeats_weekly: boolean;
+  until: string | null;
+  minutes: number;
+  affected: AppointmentPerson[];
+}
+
+export interface AppointmentInput {
+  title: string;
+  place?: string | null;
+  notes?: string | null;
+  date: string;
+  start_time: string;
+  end_time: string;
+  repeats_weekly?: boolean;
+  until?: string | null;
+  /** Ids de niños. El adulto que la crea no se lista: siempre está afectado. */
+  affected_user_ids?: number[];
+}
+
+export const appointmentApi = {
+  /** Citas que tocan el rango. Cada una sale una vez, aunque sea semanal. */
+  list: (desde?: string, hasta?: string) => {
+    const qs = new URLSearchParams();
+    if (desde) qs.set("desde", desde);
+    if (hasta) qs.set("hasta", hasta);
+    const sufijo = qs.toString() ? `?${qs}` : "";
+    return request<Appointment[]>(`/api/appointments${sufijo}`);
+  },
+  day: (date: string) => request<Appointment[]>(`/api/appointments/day/${date}`),
+  create: (payload: AppointmentInput) =>
+    request<Appointment>("/api/appointments", { method: "POST", body: JSON.stringify(payload) }),
+  update: (id: number, payload: Partial<AppointmentInput>) =>
+    request<Appointment>(`/api/appointments/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  remove: (id: number) => request<void>(`/api/appointments/${id}`, { method: "DELETE" }),
+};
+
 export interface SubjectSessionInput {
   date?: string;
   phase?: PlanPhase;
@@ -510,7 +633,7 @@ export interface SubjectSessionInput {
 
 export const extracurricularApi = {
   list: () => request<Extracurricular[]>("/api/extracurriculars"),
-  create: (payload: Omit<Extracurricular, "id">) =>
+  create: (payload: ExtracurricularInput) =>
     request<Extracurricular>("/api/extracurriculars", { method: "POST", body: JSON.stringify(payload) }),
   update: (id: number, payload: Partial<Extracurricular>) =>
     request<Extracurricular>(`/api/extracurriculars/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),

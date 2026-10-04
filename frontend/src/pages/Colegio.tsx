@@ -1,6 +1,16 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { BOTTOM_BAR_PADDING, PageNav, SubNav } from "../components/Nav";
-import { examApi, subjectApi, type Exam, type ExamPlan, type PlanItem, type Subject } from "../api/client";
+import {
+  examApi,
+  extracurricularApi,
+  subjectApi,
+  type Exam,
+  type ExamPlan,
+  type Extracurricular,
+  type ExtracurricularInput,
+  type PlanItem,
+  type Subject,
+} from "../api/client";
 import Typography from "@mui/material/Typography";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -47,6 +57,9 @@ function todayISO(): string {
   const day = String(now.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
+
+/** Días de la semana en el orden del backend: 0 = lunes .. 6 = domingo. */
+const DIAS_SEMANA = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
 
 function phaseChip(phase: string) {
   return (
@@ -165,13 +178,19 @@ export default function Colegio() {
   const [newExamSubject, setNewExamSubject] = useState<number>(0);
   const [newExamDate, setNewExamDate] = useState<string>(() => todayISO());
 
+  const [extras, setExtras] = useState<Extracurricular[]>([]);
+  const [newExtra, setNewExtra] = useState({ name: "", day_of_week: 0, start_time: "17:00", end_time: "18:00", affects_parent: false });
+  const [editExtraId, setEditExtraId] = useState<number | null>(null);
+  const [editExtra, setEditExtra] = useState<ExtracurricularInput | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [subs, exs] = await Promise.all([subjectApi.list(), examApi.list()]);
+      const [subs, exs, ex] = await Promise.all([subjectApi.list(), examApi.list(), extracurricularApi.list()]);
       setSubjects(subs);
       setExams(exs);
+      setExtras(ex);
       setNewExamSubject((cur) => (cur === 0 && subs.length > 0 ? subs[0].id : cur));
       const next = exs.filter((e) => e.exam_date >= today).slice(0, 5);
       const planMap: Record<number, ExamPlan> = {};
@@ -253,6 +272,69 @@ export default function Colegio() {
         await load();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Error al registrar sesión de resumen");
+      }
+    },
+    [load],
+  );
+
+  const addExtra = useCallback(async () => {
+    if (!newExtra.name.trim()) return;
+    try {
+      await extracurricularApi.create({ ...newExtra, name: newExtra.name.trim() });
+      setNewExtra({ name: "", day_of_week: 0, start_time: "17:00", end_time: "18:00", affects_parent: false });
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error al crear la extraescolar");
+    }
+  }, [newExtra, load]);
+
+  const startEditExtra = useCallback((x: Extracurricular) => {
+    setEditExtraId(x.id);
+    // El backend devuelve "HH:MM:SS" y el input de hora quiere "HH:MM".
+    setEditExtra({
+      name: x.name,
+      day_of_week: x.day_of_week,
+      start_time: x.start_time.slice(0, 5),
+      end_time: x.end_time.slice(0, 5),
+      affects_parent: x.affects_parent,
+    });
+  }, []);
+
+  const saveEditExtra = useCallback(async () => {
+    if (editExtraId === null || editExtra === null) return;
+    try {
+      await extracurricularApi.update(editExtraId, editExtra);
+      setEditExtraId(null);
+      setEditExtra(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error al guardar la extraescolar");
+    }
+  }, [editExtraId, editExtra, load]);
+
+  const toggleAfecta = useCallback(
+    async (x: Extracurricular, affects_parent: boolean) => {
+      // Optimista a propósito: la casilla responde al clic y no espera al servidor.
+      // Sin esto, en una conexión lenta el niño pulsa y no ve que nada ha pasado.
+      // Si el PATCH falla, `load()` la devuelve a su valor real y sale el aviso.
+      setExtras((prev) => prev.map((e) => (e.id === x.id ? { ...e, affects_parent } : e)));
+      try {
+        await extracurricularApi.update(x.id, { affects_parent });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Error al cambiar quién tiene que llevarte");
+        await load();
+      }
+    },
+    [load],
+  );
+
+  const removeExtra = useCallback(
+    async (id: number) => {
+      try {
+        await extracurricularApi.remove(id);
+        await load();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Error al borrar la extraescolar");
       }
     },
     [load],
@@ -385,6 +467,173 @@ export default function Colegio() {
             </section>
 
             <Divider />
+
+            <Divider />
+
+            <section>
+              <Typography variant="h6" sx={{ mb: 1 }}>
+                Extraescolares
+              </Typography>
+              <Box sx={{ mb: 2, border: 1, borderColor: "divider", borderRadius: 2, p: 1.5 }}>
+                <Stack spacing={1.5}>
+                  <TextField
+                    size="small"
+                    label="Actividad"
+                    placeholder="Natación"
+                    value={newExtra.name}
+                    onChange={(ev) => setNewExtra((p) => ({ ...p, name: ev.target.value }))}
+                    onKeyDown={(ev) => {
+                      if (ev.key === "Enter") void addExtra();
+                    }}
+                  />
+                  <Stack direction="row" spacing={1}>
+                    <TextField
+                      select
+                      size="small"
+                      label="Día"
+                      value={newExtra.day_of_week}
+                      onChange={(ev) => setNewExtra((p) => ({ ...p, day_of_week: Number(ev.target.value) }))}
+                      sx={{ flexGrow: 1 }}
+                    >
+                      {DIAS_SEMANA.map((d, i) => (
+                        <MenuItem key={d} value={i}>
+                          {d}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                    <TextField
+                      size="small"
+                      label="Desde"
+                      type="time"
+                      value={newExtra.start_time}
+                      onChange={(ev) => setNewExtra((p) => ({ ...p, start_time: ev.target.value }))}
+                      InputLabelProps={{ shrink: true }}
+                      sx={{ flexGrow: 1 }}
+                    />
+                    <TextField
+                      size="small"
+                      label="Hasta"
+                      type="time"
+                      value={newExtra.end_time}
+                      onChange={(ev) => setNewExtra((p) => ({ ...p, end_time: ev.target.value }))}
+                      InputLabelProps={{ shrink: true }}
+                      sx={{ flexGrow: 1 }}
+                    />
+                  </Stack>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={newExtra.affects_parent}
+                        onChange={(ev) => setNewExtra((p) => ({ ...p, affects_parent: ev.target.checked }))}
+                      />
+                    }
+                    label="Un adulto tiene que llevarme"
+                  />
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: -1 }}>
+                    Si lo marcas, esa hora también ocupa el día de quien te lleva, y aparecerá en su
+                    línea del día como "llevar a".
+                  </Typography>
+                  <Button variant="contained" onClick={() => void addExtra()} disabled={!newExtra.name.trim()}>
+                    Añadir
+                  </Button>
+                </Stack>
+              </Box>
+
+              {extras.length === 0 ? (
+                <Typography variant="body2" color="text.secondary">
+                  No tienes ninguna extraescolar.
+                </Typography>
+              ) : (
+                <List sx={{ p: 0 }}>
+                  {extras.map((x) => (
+                    <Fragment key={x.id}>
+                      <ListItem sx={{ border: 1, borderColor: "divider", borderRadius: 2, mb: 0.5 }}>
+                        <ListItemText
+                          primary={x.name}
+                          secondary={
+                            <Typography variant="caption" color="text.secondary">
+                              {DIAS_SEMANA[x.day_of_week] ?? "?"} · {x.start_time.slice(0, 5)}&#8211;{x.end_time.slice(0, 5)}
+                            </Typography>
+                          }
+                        />
+                        <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
+                          <FormControlLabel
+                            control={
+                              <Checkbox
+                                checked={x.affects_parent}
+                                onChange={(ev) => void toggleAfecta(x, ev.target.checked)}
+                                inputProps={{ "aria-label": `Me tienen que llevar a ${x.name}` }}
+                              />
+                            }
+                            label="Me llevan"
+                          />
+                          <Button
+                            size="small"
+                            color={editExtraId === x.id ? "primary" : "inherit"}
+                            variant={editExtraId === x.id ? "outlined" : "text"}
+                            onClick={() => (editExtraId === x.id ? setEditExtraId(null) : startEditExtra(x))}
+                          >
+                            {editExtraId === x.id ? "Cancelar" : "Editar"}
+                          </Button>
+                          <Button size="small" color="error" onClick={() => void removeExtra(x.id)}>
+                            Borrar
+                          </Button>
+                        </Stack>
+                      </ListItem>
+                      {editExtraId === x.id && editExtra ? (
+                        <Box sx={{ border: 1, borderColor: "divider", borderRadius: 2, mb: 0.5, p: 1.5 }}>
+                          <Stack spacing={1.5}>
+                            <TextField
+                              size="small"
+                              label="Actividad"
+                              value={editExtra.name}
+                              onChange={(ev) => setEditExtra({ ...editExtra, name: ev.target.value })}
+                            />
+                            <Stack direction="row" spacing={1}>
+                              <TextField
+                                select
+                                size="small"
+                                label="Día"
+                                value={editExtra.day_of_week}
+                                onChange={(ev) => setEditExtra({ ...editExtra, day_of_week: Number(ev.target.value) })}
+                                sx={{ flexGrow: 1 }}
+                              >
+                                {DIAS_SEMANA.map((d, i) => (
+                                  <MenuItem key={d} value={i}>
+                                    {d}
+                                  </MenuItem>
+                                ))}
+                              </TextField>
+                              <TextField
+                                size="small"
+                                label="Desde"
+                                type="time"
+                                value={editExtra.start_time}
+                                onChange={(ev) => setEditExtra({ ...editExtra, start_time: ev.target.value })}
+                                InputLabelProps={{ shrink: true }}
+                                sx={{ flexGrow: 1 }}
+                              />
+                              <TextField
+                                size="small"
+                                label="Hasta"
+                                type="time"
+                                value={editExtra.end_time}
+                                onChange={(ev) => setEditExtra({ ...editExtra, end_time: ev.target.value })}
+                                InputLabelProps={{ shrink: true }}
+                                sx={{ flexGrow: 1 }}
+                              />
+                            </Stack>
+                            <Button variant="contained" size="small" onClick={() => void saveEditExtra()}>
+                              Guardar
+                            </Button>
+                          </Stack>
+                        </Box>
+                      ) : null}
+                    </Fragment>
+                  ))}
+                </List>
+              )}
+            </section>
 
             <section>
               <Typography variant="h6" sx={{ mb: 1 }}>
