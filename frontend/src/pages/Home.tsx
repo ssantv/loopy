@@ -1312,6 +1312,11 @@ function PushSection() {
   const [subscribed, setSubscribed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  // `preguntado` = ya se intentó. `noSeSabe` = se intentó y no se pudo saber: sin
+  // esto, un fallo de red se confundía con "el servidor no tiene push" y la app le
+  // decía al usuario que VAPID no estaba configurado cuando no era cierto.
+  const [preguntado, setPreguntado] = useState(false);
+  const [noSeSabe, setNoSeSabe] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
@@ -1319,12 +1324,15 @@ function PushSection() {
       return;
     }
     setSupported(true);
+    setNoSeSabe(false);
     try {
       const cfg = await pushApi.config();
       setEnabled(cfg.enabled);
       setSubscribed(cfg.segment === "subscribed");
     } catch {
-      setEnabled(false);
+      setNoSeSabe(true);
+    } finally {
+      setPreguntado(true);
     }
   }, []);
 
@@ -1404,7 +1412,25 @@ function PushSection() {
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
         Avisos de tareas con hora, check-in del niño y resumen diario.
       </Typography>
-      {!enabled ? (
+      {!preguntado ? (
+        <Typography variant="body2" color="text.secondary">
+          Comprobando si el servidor tiene push…
+        </Typography>
+      ) : noSeSabe ? (
+        // No se afirma que falte VAPID: lo que pasó es que no se pudo preguntar, y
+        // decirlo como si fuera un problema de configuración alarmaría sin motivo.
+        <Alert
+          severity="warning"
+          sx={{ borderRadius: 2 }}
+          action={
+            <Button color="inherit" size="small" onClick={() => void refresh()} disabled={busy}>
+              Reintentar
+            </Button>
+          }
+        >
+          No se ha podido comprobar si el servidor tiene push.
+        </Alert>
+      ) : !enabled ? (
         <Alert severity="info" sx={{ borderRadius: 2 }}>
           Push no configurado en el servidor (VAPID).
         </Alert>

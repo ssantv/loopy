@@ -46,6 +46,13 @@ export default async function run(page, ui) {
 
   const subBtn = await page.getByRole("button", { name: /Suscribirme/ }).count();
   note("botón Suscribirme visible=" + subBtn);
+
+  // La sección decide qué pintar según lo que conteste `/api/push/config`, así que
+  // hay que esperar a que termine de preguntar antes de mirar: si se mira antes,
+  // sale "Push no configurado" solo por haber preguntado demasiado pronto.
+  await page
+    .waitForFunction(() => !document.body.innerText.includes("Comprobando si el servidor tiene push"), null, { timeout: 10000 })
+    .catch(() => null);
   if ((await page.getByText(/VAPID/).count()) > 0) return { error: "push desactivado en servidor" };
 
   // simulamos la suscripción del navegador vía API (mismo flujo que pushManager.subscribe)

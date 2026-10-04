@@ -4,7 +4,9 @@ App de organización personal multiusuario con **dos perfiles independientes por
 
 > Estado actual: el **modelo familiar** está cerrado — la cuenta del niño la crea un adulto y entra con nombre y PIN —, y el **contexto escolar** está montado: horario semanal, días sin cole, plantillas de deber y reparto del plan de estudio saltando los días sin clase, con tope diario de estudio por niño.
 >
-> Lo siguiente en el roadmap: **Mi día** (la principal como pantalla única de decisión) → temporizador y avisos inteligentes → **Organiza tu tarde** (adulto) → calendario y offline → cierre.
+> **Mi día** está montada y es la pantalla principal: la línea del día con comidas y huecos, las citas y extraescolares que la ocupan, y lo que toca a cada uno. Las citas familiares (puntuales o semanales, y hasta cuando quieras repetirlas) ya se crean y se editan en ella.
+>
+> Lo siguiente en el roadmap: **Organiza tu tarde** (adulto) → calendario y offline → cierre.
 
 ## Navegación
 
@@ -15,7 +17,7 @@ Pensada para pantallas pequeñas y para quien tiene dificultades de organizació
 - "Mi día" está siempre visible y marcado, así que nunca se pierde el camino de vuelta.
 - Las páginas de un área (**Menú/Compra/Resumen**, **Check-in**) van en una subnavegación dentro del área, no en la barra.
 - **"Salir"** está en el menú de usuario de la cabecera, para no competir con la navegación.
-- Todo lo accionable está en la principal: qué toca hoy, atrasadas, adelantadas, deberes con cuenta atrás, próximos exámenes y el calendario.
+- Todo lo accionable está en la principal: la línea del día (citas, extraescolares, comidas y huecos), qué toca hoy, atrasadas, adelantadas, deberes con cuenta atrás, próximos exámenes y el calendario.
 - En el área de **Colegio**, la subnavegación incluye **Perfil**, que es donde se configura el curso del niño y sus asignaturas.
 
 ## Perfil del niño
@@ -111,19 +113,32 @@ y abre `http://<tu-ip>:5173` en el navegador del móvil. Ojo: eso deja la app ac
 
 ### Guiones de QA
 
-Los guiones de `docs/` (`qa-*.py` para la API y `qa-*.mjs` para el navegador) van contra los servidores reales, así que trabajan sobre `api/loopy_dev.db`. Créanse cuentas de prueba con cada pasada y, sin limpieza, la BD de desarrollo acaba llena de `qa_*`. Por eso se lanzan a través de `docs/qa_run.py`, que apunta el id más alto de `users` antes de empezar y borra lo creado después: como todo cuelga de `users` con `ON DELETE CASCADE`, se lleva por delante tareas, sesiones, recetas y planes.
+Hay dos tipos de guiones y **cada uno tiene su envoltorio**, porque los dos limpian las cuentas de prueba que crean:
+
+- **`docs/qa-*.py`** (API) se lanzan a través de `docs/qa_run.py`.
+- **`docs/qa-*.mjs`** (navegador) se lanzan a través de `docs/qa-suite.mjs`, que además decide qué guiones pueden correr contra el dev server y cuáles necesitan el build.
+
+Los guiones van contra los servidores reales, así que trabajan sobre la BD de desarrollo y crean cuentas en cada pasada. Sin limpieza, la BD acaba llena de `qa_*` y las pasadas se pisan entre sí. Por eso ambos envoltorios apuntan el id más alto de `users` antes de empezar y borran lo creado después: como todo cuelga de `users` con `ON DELETE CASCADE`, se llevan por delante tareas, sesiones, recetas y planes.
 
 ```bash
 # Guion de API
-api\.venv\Scripts\python.exe docs\qa_run.py -- api\.venv\Scripts\python.exe docs\qa-adult.py
+cd api
+.\.venv\Scripts\python.exe ..\docs\qa_run.py -- .\.venv\Scripts\python.exe ..\docs\qa-adult.py
 
-# Guion de navegador (necesita Vite en el 5173)
-api\.venv\Scripts\python.exe docs\qa_run.py -- node <ruta-a-browser.mjs> http://localhost:5173 --script docs\qa-home.mjs
+# Guiones de navegador: API en :8000 y Vite en :5173
+cd frontend
+npm run qa
+npm run qa -- --solo=home     # un subconjunto, para iterar
 ```
 
-Todo lo que va detrás del script es el comando a ejecutar; `qa_run.py` pasa el código de salida del guion tal cual. Ejecutarlo directamente (sin envoltorio) también funciona, pero deja las cuentas atrás.
+Dos guiones (`qa-prueba-session.mjs` y `qa-push-ui.mjs`) no funcionan contra el servidor de desarrollo: esperan `navigator.serviceWorker`, y Vite solo registra el service worker en el build de producción. Cada guion declara si los necesita (`necesitaBuild`), así que la suite los deja fuera en vez de fingir que pasaron, y van en su propia pasada:
 
-Dos guiones (`qa-prueba-session.mjs` y `qa-push-ui.mjs`) no funcionan contra el servidor de desarrollo: esperan `navigator.serviceWorker`, y Vite solo registra el service worker en el build de producción. Van contra `npm run preview` (puerto 4173), con `npm run build` ejecutado antes.
+```bash
+cd frontend
+npm run build
+npm run preview -- --port 4173   # en otra terminal
+npm run qa:build
+```
 
 Ver la planificación funcional completa en [`Planteamiento.md`](Planteamiento.md).
 
