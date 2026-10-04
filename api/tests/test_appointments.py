@@ -22,7 +22,8 @@ from httpx import ASGITransport, AsyncClient
 from app.db import get_db
 from app.main import app
 from app.models.appointment import Appointment
-from app.services.appointments import citas_de, minutos_bloqueados, ocurre_en
+from app.services.appointments import Ocurrencia, citas_de, minutos_bloqueados, ocurre_en
+from app.services.tramos import minutos as minutos_de_tramos
 
 # 2026-09-21 es lunes. Todo el módulo se apoya en esa fecha.
 LUNES = date(2026, 9, 21)
@@ -279,6 +280,111 @@ async def test_una_cita_no_sale_dos_veces_por_ser_creadora_y_afectada(env):
     r = await env.client.get(f"/api/appointments/day/{LUNES.isoformat()}", headers=_cab(madre["token"]))
     assert r.status_code == 200
     assert [c["id"] for c in r.json()] == [cita["id"]]
+
+
+# --------------------------------------------------------------- citas solapadas
+
+
+def test_dos_citas_que_se_pisan_ocupan_la_union():
+    """Lo que se pisa está ocupado una vez, no dos.
+
+    Es la diferencia entre un día de 180 minutos y uno de 240: con la suma, la hora
+    en común salía cobrada dos veces y el usuario perdía estudio por un rato que no
+    existe.
+    """
+    hora = [(10 * 60, 12 * 60), (11 * 60, 13 * 60)]
+    assert minutos_de_tramos(hora) == 180
+
+
+def test_las_citas_que_se_pisan_no_cuentan_el_solape():
+    madre = Ocurrencia(cita=_cita(start_time=time(10, 0), end_time=time(12, 0)), minutos=120)
+    nino = Ocurrencia(cita=_cita(start_time=time(11, 0), end_time=time(13, 0)), minutos=120)
+
+    assert minutos_bloqueados([madre, nino]) == 180
+
+
+def test_citas_que_se_pisan_solo_en_el_borde_suman():
+    # 17:00-18:00 y 18:00-19:00 no se pisan: son 120 minutos distintos.
+    madre = Ocurrencia(cita=_cita(start_time=time(17, 0), end_time=time(18, 0)), minutos=60)
+    nino = Ocurrencia(cita=_cita(start_time=time(18, 0), end_time=time(19, 0)), minutos=60)
+
+    assert minutos_bloqueados([madre, nino]) == 120
+
+
+def test_una_cita_dentro_de_otra_no_cuenta_dos_veces():
+    # El caso real: un/drive de 18:00 a 18:30 dentro de una reunión de una hora.
+    larga = Ocurrencia(cita=_cita(start_time=time(17, 0), end_time=time(19, 0)), minutos=120)
+    corta = Ocurrencia(cita=_cita(start_time=time(18, 0), end_time=time(18, 30)), minutos=30)
+
+    assert minutos_bloqueados([larga, corta]) == 120
+
+
+def test_citas_sin_solaparse_suman_normal():
+    madre = Ocurrencia(cita=_cita(start_time=time(9, 0), end_time=time(10, 0)), minutos=60)
+    nino = Ocurrencia(cita=_cita(start_time=time(16, 0), end_time=time(17, 0)), minutos=60)
+
+    assert minutos_bloqueados([madre, nino]) == 120
+
+
+async def test_la_carga_no_cuenta_dos_veces_las_citas_solapadas(env):
+    """El número que ve el usuario, no solo la función de servicio."""
+    madre = await _adulto(env)
+    await _crear_cita(env, madre["token"], title="Médico", start_time="10:00:00", end_time="12:00:00")
+    await _crear_cita(env, madre["token"], title="Reunión", start_time="11:00:00", end_time="13:00:00")
+
+    r = await env.client.get(f"/api/day-load?date={LUNES.isoformat()}", headers=_cab(madre["token"]))
+    cuerpo = r.json()
+    assert cuerpo["blocked_minutes"] == 180
+    assert cuerpo["appointment_minutes"] == 180
+    assert cuerpo["appointments_count"] == 2
+
+
+async def test_la_carga_no_cuenta_dos_veces_una_cita_sobre_una_extraescolar(env):
+    """Cita y extraescolar se pisan: para el adulto es un solo tramo ocupado."""
+    madre = await _adulto(env)
+    await _nino(env, madre["token"], "Lucía")
+    await _crear_cita(env, madre["token"], start_time="17:30:00", end_time="18:30:00")
+    token_nino = await _token_de_nino(env, "Lucía")
+    r = await env.client.post(
+        "/api/extracurriculars",
+        json={
+            "name": "Natación",
+            "day_of_week": LUNES.weekday(),
+            "start_time": "17:00:00",
+            "end_time": "18:00:00",
+            "affects_parent": True,
+        },
+        headers=_cab(token_nino),
+    )
+    assert r.status_code == 201, r.text
+
+    carga = (await env.client.get(f"/api/day-load?date={LUNES.isoformat()}", headers=_cab(madre["token"]))).json()
+    # 17:00-18:30 son 90 minutos, no 60 + 60.
+    assert carga["blocked_minutes"] == 90
+    # Y cada parte por separado sigue diciendo lo suyo.
+    assert carga["appointment_minutes"] == 60
+    assert carga["extracurricular_minutes"] == 60
+
+
+async def test_el_bloqueo_y_los_huecos_no_se_pisan(env):
+    """Lo que dice la carga y lo que se puede colocar tienen que cuadrar.
+
+    Este es el test que encerraba el bug: `blocked_minutes` iba por su lado y los
+    huecos por el suyo, así que la ventana del día no salía ni por exceso ni por
+    defecto.
+    """
+    madre = await _adulto(env)
+    await _crear_cita(env, madre["token"], start_time="10:00:00", end_time="12:00:00")
+    await _crear_cita(env, madre["token"], title="Reunión", start_time="11:00:00", end_time="13:00:00")
+
+    carga = (await env.client.get(f"/api/day-load?date={LUNES.isoformat()}", headers=_cab(madre["token"]))).json()
+    tl = (await env.client.get(f"/api/day-timeline?date={LUNES.isoformat()}", headers=_cab(madre["token"]))).json()
+
+    assert tl["blocked_minutes"] == carga["blocked_minutes"]
+    assert sum(h["minutes"] for h in tl["huecos"]) == tl["free_minutes"]
+    # 10:00-13:00 ocupado de 07:00-23:00.
+    assert [f"{h['start'][:5]}-{h['end'][:5]}" for h in tl["huecos"]] == ["07:00-10:00", "13:00-23:00"]
+    assert carga["blocked_minutes"] + tl["free_minutes"] == 960
 
 
 async def test_el_nino_ve_las_citas_que_le_afectan(env):

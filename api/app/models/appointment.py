@@ -72,9 +72,16 @@ class Appointment(Base):
         Un `end_time` anterior al `start_time` es dato corrupto, no "ocupa la
         noche", así que vale 0 en vez de un número negativo.
         """
-        inicio = self.start_time.hour * 60 + self.start_time.minute
-        fin = self.end_time.hour * 60 + self.end_time.minute
+        inicio, fin = self.tramo
         return max(0, fin - inicio)
+
+    @property
+    def tramo(self) -> tuple[int, int]:
+        """`(inicio, fin)` en minutos desde medianoche, para uniones de horario."""
+        return (
+            self.start_time.hour * 60 + self.start_time.minute,
+            self.end_time.hour * 60 + self.end_time.minute,
+        )
 
 
 class AppointmentPerson(Base):

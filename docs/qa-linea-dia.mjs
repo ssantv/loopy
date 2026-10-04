@@ -97,9 +97,9 @@ export default async function run(page, ui) {
   const muestraFranjaSinPlato = comidas.some((b) => b.slot === "merienda" && b.title === "Merienda");
   const duracionComida = comidas.find((b) => b.slot === "comida")?.minutes === 60;
 
-  // 1) Las comidas no se cobran: 4 h de citas (dos citas de 2 h, que se suman
-  // aunque se solapen) y 0 minutos de comer.
-  const noSeCobran = carga.appointment_minutes === 240 && carga.blocked_minutes === 240;
+  // 1) Las comidas no se cobran, y el solape tampoco: 10:00-13:00 son 180 minutos,
+  // aunque las dos citas duren 2 h, y 0 minutos de comer.
+  const noSeCobran = carga.appointment_minutes === 180 && carga.blocked_minutes === 180;
   const comidaNoEntraEnLaCarga = tl.blocked_minutes === carga.blocked_minutes;
 
   // 2) Huecos: complemento de la unión, con las comidas partiendo el día.
@@ -108,6 +108,16 @@ export default async function run(page, ui) {
   const huecosOK = JSON.stringify(huecos) === JSON.stringify(esperadoHuecos);
   const sinHuecoFantasma = !huecos.some((h) => h === "12:00-12:00" || h === "12:00-11:00");
   const sumaMinutos = tl.huecos.reduce((a, h) => a + h.minutes, 0) === tl.free_minutes;
+
+  // Lo que dice la carga y lo que se puede colocar tienen que salir de la misma
+  // ventana de 16 h. Es lo único que se necesita para que no haya minutos
+  // inventados: lo ocupado (bloqueado), lo libre (huecos) y lo de comer, que se
+  // muestra pero no se cobra contra el estudio. Esta es la comprobación que
+  // fallaba cuando el solape se sumaba dos veces.
+  const minutosComida = tl.blocks.filter((b) => b.kind === "comida").reduce((a, b) => a + b.minutes, 0);
+  const ventanaCuadra =
+    carga.blocked_minutes + tl.free_minutes + minutosComida === 16 * 60
+    && tl.blocked_minutes === carga.blocked_minutes;
 
   // 3) La pantalla pinta la línea sin romperse y con los huecos visibles.
   await page.waitForTimeout(1500);
@@ -203,6 +213,7 @@ export default async function run(page, ui) {
     guardadoOk: guardado.affects_parent === true && guardado.day_of_week === 0,
     elAdultoLoLleva,
     huecos,
+    ventanaCuadra,
     cargaMin: { citas: carga.appointment_minutes, total: carga.blocked_minutes },
   };
 }

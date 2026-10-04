@@ -21,7 +21,7 @@ from httpx import ASGITransport, AsyncClient
 from app.db import get_db
 from app.main import app
 from app.models.school import Extracurricular
-from app.services.load import _minutos_unidos, _tramos_de_extras
+from app.services.load import _tramos_de_extras
 
 # 2026-09-21 es lunes (weekday 0).
 LUNES = date(2026, 9, 21)
@@ -107,50 +107,6 @@ async def _carga(env, token: str, day: date = LUNES) -> dict:
     r = await env.client.get(f"/api/day-load?date={day.isoformat()}", headers=_cab(token))
     assert r.status_code == 200, r.text
     return r.json()
-
-
-# ------------------------------------------------------------------ unión de horas
-
-
-def test_unir_horas_vacias():
-    assert _minutos_unidos([]) == 0
-
-
-def test_unir_un_solo_tramo():
-    assert _minutos_unidos([(1020, 1080)]) == 60
-
-
-def test_unir_tramos_separados_suma():
-    # 17:00-18:00 y 20:00-21:00: dos huecos distintos, 120 minutos.
-    assert _minutos_unidos([(1020, 1080), (1200, 1260)]) == 120
-
-
-def test_unir_tramos_que_se_pisan_no_repite():
-    # 17:00-18:00 y 17:30-18:30 se solapan 30 min: 90, no 120.
-    assert _minutos_unidos([(1020, 1080), (1050, 1110)]) == 90
-
-
-def test_unir_tramos_iguales_no_repite():
-    # Los dos hermanos en la misma actividad: una hora, no dos.
-    assert _minutos_unidos([(1020, 1080), (1020, 1080)]) == 60
-
-
-def test_unir_un_tramo_dentro_de_otro():
-    assert _minutos_unidos([(1020, 1200), (1050, 1080)]) == 180
-
-
-def test_unir_tramos_que_se_tocan():
-    # 17:00-18:00 y 18:00-19:00 son 120 minutos seguidos: no hay hueco entre medias.
-    assert _minutos_unidos([(1020, 1080), (1080, 1140)]) == 120
-
-
-def test_un_tramo_invertido_no_cuenta():
-    # `end_time` antes de `start_time` es dato corrupto y no debe sumar nada.
-    assert _minutos_unidos([(1080, 1020)]) == 0
-
-
-def test_unir_no_depende_del_orden_de_entrada():
-    assert _minutos_unidos([(1200, 1260), (1020, 1080)]) == _minutos_unidos([(1020, 1080), (1200, 1260)])
 
 
 # ------------------------------------------------------------------ qué entra en el día del adulto
@@ -270,7 +226,7 @@ async def test_citas_y_extraescolares_se_suman_en_el_bloqueo(env):
     assert carga["blocked_minutes"] == 120
 
 
-async def test_una_cita_que_se_pisa_con_una_extraescolar_no_se_resta(env):
+async def test_una_cita_que_se_pisa_con_una_extraescolar_no_cuenta_dos_veces(env):
     madre, (nina,) = await _madre_con_ninos(env)
     token_nina = await _token_de_nino(env, "Lucía", "4821")
     await _extra(env, token_nina, inicio="17:00", fin="18:00")
@@ -281,8 +237,15 @@ async def test_una_cita_que_se_pisa_con_una_extraescolar_no_se_resta(env):
     )
 
     carga = await _carga(env, madre["token"])
-    # Se solapan, pero son dos compromisos distintos que el usuario ha creado: 120.
-    assert carga["blocked_minutes"] == 120
+    # Antes esto valía 120 (60 + 60) y era un error: los 30 minutos en común están
+    # ocupados una vez, porque es el mismo rato del día. `blocked_minutes` son
+    # minutos, no número de compromisos: si dos cosas se pisan, esa media hora se
+    # pierde igual, y contarla dos veces hace que la app crea que el día está más
+    # lleno de lo que está y le quita estudio que sí tenía.
+    assert carga["blocked_minutes"] == 90
+    # Cada parte por separado sigue diciendo lo que le toca, que es lo que se enseña.
+    assert carga["extracurricular_minutes"] == 60
+    assert carga["appointment_minutes"] == 60
 
 
 # ------------------------------------------------------------------ API

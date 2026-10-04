@@ -511,7 +511,11 @@ export interface DayLoad {
   over_cap_minutes: number;
   unplaced_study_minutes: number;
   exams_pending: number;
-  /** Reparto de `blocked_minutes`: extraescolares (propias y compartidas) y citas. */
+  /**
+   * Minutos de cada clase de bloqueo, para poder nombrarlos. **No suman
+   * `blocked_minutes`**: si una cita se pisa con una extraescolar, la unión cuenta ese
+   * rato una vez y estas dos lo cuentan dos.
+   */
   extracurricular_minutes: number;
   appointment_minutes: number;
   appointments_count: number;
@@ -559,8 +563,15 @@ export interface DayTimeline {
   /** El mismo número que `day-load`. Si difieren, alguno miente. */
   blocked_minutes: number;
   /**
-   * Suma de `huecos`, y **no** es la ventana menos `blocked_minutes`: las comidas
-   * parten los huecos pero no se cobran contra el tiempo de estudio.
+   * Suma de `huecos`, y **no** es la ventana menos `blocked_minutes`: hay dos
+   * razones y las dos son a propósito.
+   *
+   * - Las comidas parten los huecos pero no se cobran contra el tiempo de estudio.
+   * - Los huecos se recortan a la ventana del día (07:00-23:00) y un bloque fuera de
+   *   ella ocupa minutos de `blocked_minutes` sin reducir ningún hueco.
+   *
+   * Con eso, y con que `blocked_minutes` cuente lo solapado una sola vez, los dos
+   * números cuadran: lo que no está ocupado está libre.
    */
   free_minutes: number;
   huecos: Hueco[];

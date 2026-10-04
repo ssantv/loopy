@@ -21,10 +21,13 @@ Tres bloques, porque son tres cosas distintas y no deben mezclarse:
   puede no dar para más.
 - **Citas**: otro tiempo de pared, y del mismo tipo, pero del que se decide a mano
   (dentista, cumpleaños). Se cuenta aparte para poder decir "tienes una cita" en vez
-  de "tienes algo bloqueado", aunque las dos acaben sumando en `blocked_minutes`.
+  de "tienes algo bloqueado".
 
-`blocked_minutes` es la suma de ambos. Una cita que afecta a tres personas sigue
-siendo una hora de día ocupado, no tres: se cuentan citas, no personas.
+`blocked_minutes` es la **unión** de ambos, no la suma: si una cita se pisa con una
+extraescolar, esa media hora en común está ocupada una vez, no dos. Decirlo de otra
+forma declararía el día más lleno de lo que está y le quitaría estudio al usuario.
+Por eso `extracurricular_minutes` y `appointment_minutes` son medidas independientes
+y su suma puede pasarse de `blocked_minutes`.
 """
 
 from __future__ import annotations
@@ -37,11 +40,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.school import Extracurricular
 from app.models.user import User
-from app.services.appointments import citas_de, minutos_bloqueados
+from app.services.appointments import citas_de
 from app.services.estimates import kind_de_categoria, ritmos_reales
 from app.services.pending import pending_items
 from app.services.plan_spread import spread_exams
 from app.services.schedule import extras_compartidas_de, load_school_calendar
+from app.services.tramos import minutos as minutos_de_tramos
 
 
 @dataclass(frozen=True)
@@ -59,7 +63,9 @@ class DayLoad:
     blocked_minutes: int
     unplaced_study_minutes: int
     exams_pending: int
-    # Desglose de `blocked_minutes`, para poder nombrarlo en la interfaz.
+    # Medidas por clase de bloqueo, para poder nombrarlas en la interfaz. No suman
+    # `blocked_minutes`: si una cita se pisa con una extraescolar, la unión los cuenta
+    # una vez y estas dos lo cuentan dos.
     extracurricular_minutes: int = 0
     appointment_minutes: int = 0
     appointments_count: int = 0
@@ -75,44 +81,6 @@ class DayLoad:
         if self.daily_max_minutes <= 0:
             return 0
         return max(0, self.study_minutes - self.daily_max_minutes)
-
-
-def _minutos_bloqueados(extras: list[Extracurricular]) -> int:
-    """Duración de las extraescolares del día, en minutos.
-
-    Un `end_time` anterior al `start_time` no significa "ocupa la noche": sería un
-    dato corrupto, y contarlo como bloqueo sería peor que ignorarlo, así que suma 0.
-    """
-    total = 0
-    for e in extras:
-        minutos = (e.end_time.hour * 60 + e.end_time.minute) - (e.start_time.hour * 60 + e.start_time.minute)
-        total += max(0, minutos)
-    return total
-
-
-def _minutos_unidos(bloques: Iterable[tuple[int, int]]) -> int:
-    """Minutos de la unión de varios tramos, sin contar dos veces lo que se pisa.
-
-    Hace falta por un caso concreto: si dos hermanos están en la misma actividad a
-    la misma hora, hay **dos filas** en `extracurriculars` (una por niño) pero para
-    el adulto es un solo viaje. Sumarlas diría que tiene dos horas ocupadas cuando
-    tiene una, y lo haría exactamente en los días con más niños, que son los que
-    de verdad están más llenos.
-    """
-    tramos = sorted((ini, fin) for ini, fin in bloques if fin > ini)
-    total = 0
-    ini = fin = None
-    for a, b in tramos:
-        if ini is None:
-            ini, fin = a, b
-        elif a <= fin:
-            fin = max(fin, b)
-        else:
-            total += fin - ini
-            ini, fin = a, b
-    if ini is not None:
-        total += fin - ini
-    return total
 
 
 def _tramos_de_extras(extras: Iterable[Extracurricular]) -> list[tuple[int, int]]:
@@ -156,13 +124,20 @@ async def day_load(db: AsyncSession, user: User, day: date) -> DayLoad:
     # Se unen con las propias en vez de sumarse: si coinciden en hora, para este
     # usuario es un único tramo ocupado, no dos.
     compartidas = await extras_compartidas_de(db, user.id, day)
-    extras_minutes = _minutos_unidos([*_tramos_de_extras(extras), *_tramos_de_extras(compartidas)])
+    tramos_extras = [*_tramos_de_extras(extras), *_tramos_de_extras(compartidas)]
+    extras_minutes = minutos_de_tramos(tramos_extras)
 
     # Las citas del día, una vez cada una. `citas_de` ya viene filtrada por día y
     # ordenada, así que no hace falta volver a agrupar.
     citas = await citas_de(db, user.id, day)
-    citas_minutes = minutos_bloqueados(citas)
+    tramos_citas = [o.cita.tramo for o in citas]
+    citas_minutes = minutos_de_tramos(tramos_citas)
 
+    # `blocked_minutes` une **las dos clases juntas**, no las suma. Un niño con
+    # extraescolar de 17:00 a 18:00 mientras el adulto tiene una cita de 17:30 a
+    # 18:30 tiene 90 minutos ocupados, aunque cada parte por separado diga 60: son
+    # las dos cosas a la vez, y contarlas por separado declares media hora de más
+    # como si el día estuviera libre.
     return DayLoad(
         date=day,
         daily_max_minutes=user.study_max_minutes,
@@ -171,7 +146,7 @@ async def day_load(db: AsyncSession, user: User, day: date) -> DayLoad:
         task_minutes=task_minutes,
         tasks_pending=len(tareas),
         tasks_without_estimate=sin_estimar,
-        blocked_minutes=extras_minutes + citas_minutes,
+        blocked_minutes=minutos_de_tramos([*tramos_extras, *tramos_citas]),
         unplaced_study_minutes=sum(t.minutes for t in spread.sin_cabida),
         exams_pending=len(spread.exam_meta),
         extracurricular_minutes=extras_minutes,

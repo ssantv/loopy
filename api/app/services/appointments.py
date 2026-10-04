@@ -4,10 +4,10 @@ Aquí vive la única lógica que no es un CRUD, y es la que hace fácil equivoca
 `-fecha` no significa "toda la vida". Una cita puntual solo existe ese día, y una
 semanal solo en su día de la semana entre `first_on` y `until`.
 
-El otro detalle importante es que **la cuenta va por cita, no por persona**. Un
-cumpleaños que afecta a tres personas ocupa una hora del día, no tres: si se sumara
-por persona, el día parecería tres veces más lleno de lo que está, justo en las
-fechas donde más gente hay.
+El otro detalle importante es que **la cuenta va por horario, no por persona ni por
+cita**. Un cumpleaños que afecta a tres personas ocupa una hora del día, no tres: si
+se sumara por persona, el día parecería tres veces más lleno de lo que está. Y dos
+citas que se pisan ocupan la unión, no la suma, por la misma razón.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appointment import Appointment, AppointmentPerson
+from app.services.tramos import minutos as minutos_de_tramos
 
 
 @dataclass(frozen=True)
@@ -75,5 +76,14 @@ async def citas_de(db: AsyncSession, user_id: int, day: date) -> list[Ocurrencia
 
 
 def minutos_bloqueados(ocurrencias: list[Ocurrencia]) -> int:
-    """Minutos ocupados del día. Una cita cuenta una vez, aunque afecte a tres personas."""
-    return sum(o.minutos for o in ocurrencias)
+    """Minutos que el día está ocupado de verdad, **contando cada solape una vez**.
+
+    Dos cosas que se pisan no ocupan el doble: una cita de 10:00 a 12:00 y otra de
+    11:00 a 13:00 dejan el día ocupado de 10:00 a 13:00, que son 180 minutos. Sumar
+    daría 240 y le robaría una hora al tiempo de estudio del día, que es justo lo que
+    no se puede robar en un día ya apretado.
+
+    Una cita que afecta a tres personas sigue valiendo una hora, no tres: `citas_de`
+    devuelve cada cita una sola vez y aquí solo se unen horarios.
+    """
+    return minutos_de_tramos(o.cita.tramo for o in ocurrencias)

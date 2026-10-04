@@ -34,6 +34,7 @@ from app.models.user import User
 from app.services.appointments import citas_de
 from app.services.load import day_load
 from app.services.schedule import extras_compartidas_de, load_school_calendar
+from app.services.tramos import une
 
 CITA = "cita"
 EXTRAESCOLAR = "extraescolar"
@@ -249,6 +250,11 @@ async def day_blocks(db: AsyncSession, user: User, day: date) -> list[Bloque]:
 VENTANA_DIA = (7 * 60, 23 * 60)
 
 
+def _a_minutos(t: time) -> int:
+    """Una hora del día en minutos desde medianoche, el formato que usa `tramos`."""
+    return t.hour * 60 + t.minute
+
+
 @dataclass(frozen=True)
 class Hueco:
     """Un tramo sin nada encima, en el que sí se puede colocar algo."""
@@ -270,13 +276,9 @@ def _huecos(bloques: list[Bloque]) -> tuple[Hueco, ...]:
     dejando menos hueco.
     """
     ini, fin = VENTANA_DIA
-    ocupados: list[tuple[int, int]] = []
-    for b in bloques:
-        a = max(ini, b.start.hour * 60 + b.start.minute)
-        z = min(fin, b.end.hour * 60 + b.end.minute)
-        if z > a:
-            ocupados.append((a, z))
-    ocupados.sort()
+    ocupados = une(
+        (max(ini, _a_minutos(b.start)), min(fin, _a_minutos(b.end))) for b in bloques
+    )
 
     huecos: list[Hueco] = []
     cursor = ini
@@ -293,18 +295,20 @@ def _huecos(bloques: list[Bloque]) -> tuple[Hueco, ...]:
 class Timeline:
     """Los bloques del día y los huecos que quedan, en la misma unidad.
 
-    `blocked_minutes` y `free_minutes` **no** suman la ventana, y es a propósito:
+    `blocked_minutes` y `free_minutes` cuadran sobre la ventana del día salvo por dos
+    cosas, y las dos son a propósito:
 
-    - `blocked_minutes` sale de `day_load` (citas + extraescolares) para que los dos
-      endpoints digan lo mismo sobre la misma cifra.
-    - `free_minutes` es la suma de los huecos de verdad, que además tienen en cuenta
-      las comidas. Las comidas se muestran pero no se cobran: comer ocupa el día, pero
-      si restaran de la carga, activar desayuno y cena quitaría hora y pico de
-      estudio a quien ya tiene el plan repartido.
+    - Las comidas se muestran y parten los huecos, pero **no se cobran**: comer ocupa
+      el día, y si restaran de la carga, activar desayuno y cena le quitaría hora y
+      pico de estudio a quien ya tiene el plan repartido.
+    - Los huecos se recortan a 07:00-23:00, así que un bloque fuera de la ventana
+      (una extraescolar a las 6:00) suma a `blocked_minutes` sin quitar hueco.
 
-    La diferencia entre las dos cuentas es exactamente el rato de comer, y por eso
-    los huecos se mandan aparte: quien quiera saber cuánto se puede estudiar usa
-    `blocked_minutes`, y quien quiera saber cuándo puede colocar algo, los huecos.
+    Lo que sí cuadra es lo solapado: `blocked_minutes` cuenta cada minuto una vez, y
+    por eso ninguna cita se pisa dos veces.
+
+    Por eso los huecos se mandan aparte: quien quiera saber cuánto se puede estudiar
+    usa `blocked_minutes`, y quien quiera saber cuándo puede colocar algo, los huecos.
     """
 
     blocks: tuple[Bloque, ...]

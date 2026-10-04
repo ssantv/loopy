@@ -51,11 +51,15 @@ class DayTimelineOut(BaseModel):
     paralelo: si los dos endpoints dijeran cosas distintas sobre el mismo día,
     alguno de los dos estaría mintiendo y sería imposible saber cuál.
 
-    `free_minutes` **no** es `ventana - blocked_minutes`. Es la suma de `huecos`,
-    que tiene en cuenta las comidas, y las comidas no entran en `blocked_minutes`
-    porque no se cobran contra el tiempo de estudio. Quien quiera saber cuánto
-    puede estudiar, use `blocked_minutes`; quien quiera saber cuándo colocar algo,
-    `huecos`.
+    `free_minutes` **no** es `ventana - blocked_minutes`. Es la suma de `huecos`, y
+    difiere por dos motivos a propósito: las comidas parten los huecos pero no entran
+    en `blocked_minutes` porque no se cobran contra el estudio, y los huecos se
+    recortan a la ventana del día, de modo que un bloque fuera de ella sí ocupa
+    minutos sin quitarle hueco a nadie. Lo que no se perdona es el solape:
+    `blocked_minutes` cuenta cada minuto una vez.
+
+    Quien quiera saber cuánto puede estudiar, use `blocked_minutes`; quien quiera
+    saber cuándo colocar algo, `huecos`.
     """
 
     date: date
