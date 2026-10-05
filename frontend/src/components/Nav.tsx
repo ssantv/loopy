@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { AvisoConexion } from "./AvisoConexion";
 import AppBar from "@mui/material/AppBar";
 import Toolbar from "@mui/material/Toolbar";
 import Typography from "@mui/material/Typography";
@@ -148,6 +149,10 @@ export function PageNav({ title }: { title: string }) {
           </Menu>
         </Toolbar>
       </AppBar>
+
+      {/* Va justo debajo de la barra y no dentro: si se colgara de la barra, en un
+          teléfono pequeño el aviso se comería el sitio de los botones de destino. */}
+      <AvisoConexion />
 
       {isMobile && (
         <Paper

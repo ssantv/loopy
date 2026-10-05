@@ -1,3 +1,5 @@
+import { SEGUNDOS_TIMEOUT } from "../offline";
+
 export interface User {
   id: number;
   email: string | null;
@@ -21,6 +23,16 @@ export interface AuthResponse {
 }
 
 const TOKEN_KEY = "loopy_token";
+/**
+ * Copia del último usuario que se supo leer del servidor.
+ *
+ * Va aparte del token a propósito: el token es la credencial y esta es una pista. Sin
+ * ella, arrancar sin conexión no puede ni saber de quién es la sesión, y el siguiente
+ * paso sería adivinarlo por el nombre, que es justo lo que no se debe hacer con la
+ * pantalla de un niño de ver a ver. Solo se escribe cuando `/api/me` ha respondido de
+ * verdad, así que en el peor caso lo que hay es viejo, nunca inventado.
+ */
+const USER_KEY = "loopy_usuario";
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -32,6 +44,29 @@ export function setToken(token: string): void {
 
 export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+/** El usuario del último arranque con red. `null` si no se sabe. */
+export function cachedUser(): User | null {
+  const raw = localStorage.getItem(USER_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as User;
+  } catch {
+    // Una copia corrupta es mejor ignorarla que dejar la app sin poder arrancar.
+    localStorage.removeItem(USER_KEY);
+    return null;
+  }
+}
+
+export function rememberUser(user: User): void {
+  try {
+    localStorage.setItem(USER_KEY, JSON.stringify(user));
+  } catch {
+    // Si el navegador no deja escribir (modo privado, cuota llena), la app sigue
+    // funcionando: solo se pierde la pista de arranque sin conexión.
+  }
 }
 
 export class ApiError extends Error {
@@ -42,11 +77,51 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Lo que se muestra cuando el navegador no consigue ni contestar.
+ *
+ * Sin esto, el `fetch` rechaza con un `TypeError` cuyo mensaje es "Failed to fetch" o
+ * "NetworkError when attempting to fetch resource", y eso es exactamente el texto que
+ * se le enseñaba al usuario: en inglés, y sin decir qué hacer. Se lanza como `ApiError`
+ * con estado 0 para que las pantallas que ya saben distinguir "el servidor dijo que
+ * no" de "no hubo servidor" no tengan que cambiar de nada, y para que el mensaje
+ * llegue solo.
+ */
+export class OfflineError extends ApiError {
+  constructor() {
+    super(0, "Sin conexión. No se ha podido hablar con el servidor.");
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(path, { ...init, headers });
+
+  // Un `fetch` sin reloj se queda esperando para siempre si el servidor acepta la
+  // conexión y luego no contesta. Eso no es un error que se vea: es una pantalla que
+  // no se mueve y un botón que no responde, que es la peor forma de fallar porque no
+  // parece un fallo. Quien traiga su propio `signal` manda él, que es lo que hace
+  // falta para abortar a mano.
+  //
+  // Ojo con el reloj: son milisegundos, y si se pasa el número de segundos tal cual
+  // cada petición se corta a los 30 ms y todo falla con "Sin conexión" sin que haya
+  // red. Ya pasó, y el síntoma (la pantalla de login siempre vacía) no señalaba ni el
+  // reloj ni el abort: señalaba la red.
+  const control = new AbortController();
+  const reloj = setTimeout(() => control.abort(), SEGUNDOS_TIMEOUT * 1000);
+  init?.signal?.addEventListener("abort", () => control.abort());
+
+  let res: Response;
+  try {
+    res = await fetch(path, { ...init, headers, signal: control.signal });
+  } catch {
+    // `fetch` solo rechaza así cuando no hubo respuesta útil: sin red, servidor caído,
+    // CORS, o el reloj de arriba. Ninguna de esas cosas la arregla reintentar aquí.
+    throw new OfflineError();
+  } finally {
+    clearTimeout(reloj);
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try {

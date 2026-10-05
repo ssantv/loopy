@@ -6,7 +6,9 @@ App de organización personal multiusuario con **dos perfiles independientes por
 >
 > **Mi día** está montada y es la pantalla principal: la línea del día con comidas y huecos, las citas y extraescolares que la ocupan, y lo que toca a cada uno. Las citas familiares (puntuales o semanales, y hasta cuando quieras repetirlas) ya se crean y se editan en ella. Cada hueco libre tiene un **+ Colocar** que mete una tarea de casa en ese rato: preguntar cuánto va a llevar y colocarla. Adulto y niño colocan igual, y una tarea ya hecha sigue ahí, tachada, porque el rato se gastó.
 >
-> Lo siguiente en el roadmap: calendario y offline → cierre.
+> La app también **se abre sin conexión**: cualquier pantalla sigue arrancando y se ven los últimos datos leídos, con un aviso de "Sin conexión" que desaparece al volver la red. Abrirla sin red ya no echa a la familia de la sesión, y guardar algo nuevo sin red todavía no se puede (falta la cola de escrituras).
+>
+> Lo siguiente en el roadmap: la cola de escrituras sin conexión → cierre.
 
 ## Navegación
 
@@ -131,13 +133,20 @@ npm run qa
 npm run qa -- --solo=home     # un subconjunto, para iterar
 ```
 
-Dos guiones (`qa-prueba-session.mjs` y `qa-push-ui.mjs`) no funcionan contra el servidor de desarrollo: esperan `navigator.serviceWorker`, y Vite solo registra el service worker en el build de producción. Cada guion declara si los necesita (`necesitaBuild`), así que la suite los deja fuera en vez de fingir que pasaron, y van en su propia pasada:
+Tres guiones (`qa-prueba-session.mjs`, `qa-push-ui.mjs` y `qa-offline.mjs`) no funcionan contra el servidor de desarrollo: esperan `navigator.serviceWorker`, y Vite solo registra el service worker en el build de producción. Cada guion declara si los necesita (`necesitaBuild`), así que la suite los deja fuera en vez de fingir que pasaron, y van en su propia pasada:
 
 ```bash
 cd frontend
 npm run build
 npm run preview -- --port 4173   # en otra terminal
 npm run qa:build
+```
+
+`qa:offline` es el guion suelto del modo sin conexión (lee antes con red para llenar la caché, corta la red, y comprueba que una ruta profunda sigue arrancando, que la sesión sobrevive y que el aviso aparece y desaparece):
+
+```bash
+cd frontend
+npm run qa:offline
 ```
 
 Ver la planificación funcional completa en [`Planteamiento.md`](Planteamiento.md).
