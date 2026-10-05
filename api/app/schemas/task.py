@@ -50,6 +50,21 @@ class TaskUpdate(BaseModel):
     archived_at: datetime | None = None
 
 
+class PlaceTaskRequest(BaseModel):
+    """Colocar una tarea en un hueco.
+
+    `start` es un instante **con zona** y no una hora suelta: "el jueves a las 18:00"
+    tiene que guardarse como las 18:00 del jueves en la zona del usuario, que es como
+    lo va a leer la línea. Aceptarlo con zona desde el principio evita el clásico
+    "se guarda a las 16:00" cuando el servidor va en UTC.
+    """
+
+    start: datetime
+    # Sin tope superior de valor: la línea recorta a medianoche. Un número absurdo
+    # (0 o negativo) sí se rechaza, porque no es "mucho rato", es una tarea sin rato.
+    minutes: int | None = Field(default=None, ge=1, le=24 * 60)
+
+
 class TaskOut(BaseModel):
     id: int
     category: str
@@ -74,6 +89,8 @@ class TaskOut(BaseModel):
     rotation_index: int | None
     pending_from_class: bool
     est_minutes: int | None
+    planned_start: datetime | None = None
+    planned_minutes: int | None = None
     done_minutes: int
     last_done_on: date | None
     archived_at: datetime | None

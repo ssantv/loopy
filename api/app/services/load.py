@@ -16,33 +16,42 @@ Tres bloques, porque son tres cosas distintas y no deben mezclarse:
   historial, y su `est_minutes` si no. Las que no tienen ni una cosa ni la otra
   se cuentan aparte en vez de inventar 25 minutos: un total con relleno es peor
   que admitir que no se sabe.
-- **Extraescolares**: tiempo de pared en el que no se puede estudiar. No entra en
-  el tope (el tope es de estudio, no del día entero), pero explica por qué un día
-  puede no dar para más.
-- **Citas**: otro tiempo de pared, y del mismo tipo, pero del que se decide a mano
-  (dentista, cumpleaños). Se cuenta aparte para poder decir "tienes una cita" en vez
-  de "tienes algo bloqueado".
+- **Tiempo de pared**: lo que no se puede usar para nada más. Son tres clases, y las
+  tres entran en `blocked_minutes`:
+  - **Extraescolares**: las del propio usuario y las de los hijos que hay que llevar.
+    No entra en el tope (el tope es de estudio, no del día entero), pero explica por
+    qué un día puede no dar para más.
+  - **Citas**: otro tiempo de pared, y del mismo tipo, pero del que se decide a mano
+    (dentista, cumpleaños). Se cuenta aparte para poder decir "tienes una cita" en vez
+    de "tienes algo bloqueado".
+  - **Tareas colocadas**: las que el usuario metió en un hueco concreto. Ocupan de
+    verdad, así que cuentan aquí, pero también son trabajo pendiente: por eso
+    `placed_counted` existe y `total_minutes` lo resta para no contarlas dos veces.
+    Ojo: se resta `placed_counted` (lo que además sumaba como trabajo), no
+    `placed_minutes` (lo que ocupa el rato). Una tarea colocada sin estimación ocupa
+    pero no suma, y restar su duración entera la borraría de la cuenta.
 
-`blocked_minutes` es la **unión** de ambos, no la suma: si una cita se pisa con una
+`blocked_minutes` es la **unión** de los tres, no la suma: si una cita se pisa con una
 extraescolar, esa media hora en común está ocupada una vez, no dos. Decirlo de otra
 forma declararía el día más lleno de lo que está y le quitaría estudio al usuario.
-Por eso `extracurricular_minutes` y `appointment_minutes` son medidas independientes
-y su suma puede pasarse de `blocked_minutes`.
+Por eso `extracurricular_minutes`, `appointment_minutes` y `placed_minutes` son
+medidas independientes y su suma puede pasarse de `blocked_minutes`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.school import Extracurricular
+from app.models.task import Task
 from app.models.user import User
 from app.services.appointments import citas_de
 from app.services.estimates import kind_de_categoria, ritmos_reales
-from app.services.pending import pending_items
+from app.services.pending import DEFAULT_PLANNED_MINUTES, pending_items, placed_tasks
 from app.services.plan_spread import spread_exams
 from app.services.schedule import extras_compartidas_de, load_school_calendar
 from app.services.tramos import minutos as minutos_de_tramos
@@ -69,11 +78,30 @@ class DayLoad:
     extracurricular_minutes: int = 0
     appointment_minutes: int = 0
     appointments_count: int = 0
+    # Minutos de ratos que el usuario ya colocó en un hueco hoy (lo que ocupa de
+    # verdad). Van dentro de `blocked_minutes`.
+    placed_minutes: int = 0
+    # La parte de esos minutos que **también** estaba en `task_minutes`: solo las
+    # tareas colocadas que además tenían minutos contados como trabajo pendiente.
+    # `total_minutes` resta esto, no `placed_minutes`.
+    placed_counted: int = 0
 
     @property
     def total_minutes(self) -> int:
-        """Todo lo que ocupa el día: estudio + tareas + tiempo de pared."""
-        return self.study_minutes + self.task_minutes + self.blocked_minutes
+        """Todo lo que ocupa el día: estudio + tareas + tiempo de pared.
+
+        Las tareas ya colocadas se restan porque vienen en los dos sumandos: cuentan
+        como trabajo pendiente (`task_minutes`) y como rato ocupado
+        (`blocked_minutes`). Sumarlas sin restar diría que el martes hay 25 min de
+        trabajo y 25 min ocupados por una tarea de 25, que es un día con 50 minutos
+        de compromiso donde en realidad hay 25.
+
+        Se resta `placed_counted` y no `placed_minutes` porque una tarea colocada sin
+        estimación ocupa el rato (`blocked_minutes`) pero nunca sumó trabajo pendiente
+        (`task_minutes`): restar su duración entera haría desaparecer de la cuenta
+        un rato que sí está ocupado.
+        """
+        return self.study_minutes + self.task_minutes + self.blocked_minutes - self.placed_counted
 
     @property
     def over_cap_minutes(self) -> int:
@@ -88,6 +116,17 @@ def _tramos_de_extras(extras: Iterable[Extracurricular]) -> list[tuple[int, int]
     return [
         (e.start_time.hour * 60 + e.start_time.minute, e.end_time.hour * 60 + e.end_time.minute) for e in extras
     ]
+
+
+def _tramo_de_colocada(task: Task, inicio: datetime) -> tuple[int, int]:
+    """Una tarea colocada como tramo `(inicio, fin)` en minutos desde medianoche.
+
+    Comparte la duración por defecto con el bloque que se pinta en `day`, así que una
+    tarea sin `planned_minutes` mide lo mismo en la línea y en la carga.
+    """
+    ini = inicio.hour * 60 + inicio.minute
+    minutos = task.planned_minutes or DEFAULT_PLANNED_MINUTES
+    return (ini, min(ini + minutos, 24 * 60))
 
 
 async def day_load(db: AsyncSession, user: User, day: date) -> DayLoad:
@@ -108,14 +147,22 @@ async def day_load(db: AsyncSession, user: User, day: date) -> DayLoad:
     ritmos = await ritmos_reales(db, user, [(kind_de_categoria(t.category), t.id) for t in tareas])
     task_minutes = 0
     sin_estimar = 0
+    # Los minutos que ***contaron*** en `task_minutes` de cada tarea, por id. Se
+    # guardan para poder restar luego solo el solape real con lo que el usuario
+    # colocó (ver `placed_counted`): una tarea sin estimación aporta 0, no su
+    # duración, porque no llegó a sumar.
+    minutos_por_tarea: dict[int, int] = {}
     for t in tareas:
         real = ritmos.get((kind_de_categoria(t.category), t.id))
         if real is not None:
             task_minutes += real
+            minutos_por_tarea[t.id] = real
         elif t.est_minutes:
             task_minutes += t.est_minutes
+            minutos_por_tarea[t.id] = t.est_minutes
         else:
             sin_estimar += 1
+            minutos_por_tarea[t.id] = 0
 
     cal = await load_school_calendar(db, user.id)
     extras = cal.extras_on(day)
@@ -127,17 +174,29 @@ async def day_load(db: AsyncSession, user: User, day: date) -> DayLoad:
     tramos_extras = [*_tramos_de_extras(extras), *_tramos_de_extras(compartidas)]
     extras_minutes = minutos_de_tramos(tramos_extras)
 
-    # Las citas del día, una vez cada una. `citas_de` ya viene filtrada por día y
+# Las citas del día, una vez cada una. `citas_de` ya viene filtrada por día y
     # ordenada, así que no hace falta volver a agrupar.
     citas = await citas_de(db, user.id, day)
     tramos_citas = [o.cita.tramo for o in citas]
     citas_minutes = minutos_de_tramos(tramos_citas)
 
-    # `blocked_minutes` une **las dos clases juntas**, no las suma. Un niño con
+    # Las tareas que el usuario colocó en un hueco: ocupan de verdad, así que entran en
+    # la unión de `blocked_minutes`. Se cuentan aparte para poder restar de
+    # `total_minutes` lo que ya estaba en `task_minutes` (ver `DayLoad`).
+    colocadas = await placed_tasks(db, user, day)
+    tramos_tareas = [_tramo_de_colocada(t, inicio) for t, inicio in colocadas]
+    placed_minutes = minutos_de_tramos(tramos_tareas)
+    # Solo se restan los minutos de las colocadas que además contaban como trabajo
+    # pendiente. Restarlos todos sería restar de la nada lo de una tarea sin
+    # estimación: esos minutos entraron en `blocked_minutes` pero nunca en
+    # `task_minutes`, y `total_minutes` se quedaría corto por ellos.
+    placed_counted = sum(minutos_por_tarea.get(t.id, 0) for t, _ in colocadas)
+
+    # `blocked_minutes` une **las tres clases juntas**, no las suma. Un niño con
     # extraescolar de 17:00 a 18:00 mientras el adulto tiene una cita de 17:30 a
     # 18:30 tiene 90 minutos ocupados, aunque cada parte por separado diga 60: son
-    # las dos cosas a la vez, y contarlas por separado declares media hora de más
-    # como si el día estuviera libre.
+    # las dos cosas a la vez, y contarlos por separado declara media hora de más
+    # como si el día estuviera libre. Lo mismo con una tarea colocada encima.
     return DayLoad(
         date=day,
         daily_max_minutes=user.study_max_minutes,
@@ -146,10 +205,12 @@ async def day_load(db: AsyncSession, user: User, day: date) -> DayLoad:
         task_minutes=task_minutes,
         tasks_pending=len(tareas),
         tasks_without_estimate=sin_estimar,
-        blocked_minutes=minutos_de_tramos([*tramos_extras, *tramos_citas]),
+        blocked_minutes=minutos_de_tramos([*tramos_extras, *tramos_citas, *tramos_tareas]),
         unplaced_study_minutes=sum(t.minutes for t in spread.sin_cabida),
         exams_pending=len(spread.exam_meta),
         extracurricular_minutes=extras_minutes,
         appointment_minutes=citas_minutes,
         appointments_count=len(citas),
+        placed_minutes=placed_minutes,
+        placed_counted=placed_counted,
     )

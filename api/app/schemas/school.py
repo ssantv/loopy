@@ -252,10 +252,12 @@ class DayLoadOut(BaseModel):
     over_cap_minutes: int
     unplaced_study_minutes: int
     exams_pending: int
-    # Desglose de `blocked_minutes`: qué parte son extraescolares y qué parte citas.
+    # Desglose de `blocked_minutes`: qué parte son extraescolares, qué parte citas y
+    # qué parte tareas que el usuario ya colocó en un hueco.
     extracurricular_minutes: int = 0
     appointment_minutes: int = 0
     appointments_count: int = 0
+    placed_minutes: int = 0
 
 
 # ---------------------------------------------------------------- check-in

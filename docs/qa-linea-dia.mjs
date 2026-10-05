@@ -124,6 +124,87 @@ export default async function run(page, ui) {
   const texto = await page.evaluate(() => document.body.innerText);
   const lineaPintada = /Tu l\u00ednea del d\u00eda/.test(texto) || texto.includes("Tu linea del dia");
 
+  // 3b) Colocar desde la pantalla, de verdad. Todo lo demás va por API, y la API no lleva
+  // la cuenta de la zona horaria: si el diálogo mandara la hora del hueco como si fuera
+  // UTC, el bloque aparecería corrido y aquí no se vería. Por eso esta parte toca los
+  // botones de verdad, y sobre el día de hoy, que es el único que pinta la línea.
+  const tareaUI = await page.evaluate(async () => {
+    const token = localStorage.getItem("loopy_token");
+    const h = new Date();
+    const iso = `${h.getFullYear()}-${String(h.getMonth() + 1).padStart(2, "0")}-${String(h.getDate()).padStart(2, "0")}`;
+    const r = await fetch("http://localhost:5173/api/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ title: "Sacar al perro", category: "hogar", due_on: iso }),
+    });
+    const cuerpo = await r.json();
+    return { id: cuerpo?.id ?? null, status: r.status };
+  });
+
+  let placingOk = false;
+  let detalleColocada = {};
+  let habiaHuecos = false;
+  if (tareaUI.status === 201) {
+    // Se recarga para que la tarea nueva entre en la lista de "qué colocar".
+    await page.reload();
+    await page.waitForTimeout(2500);
+
+    const huecos = page.locator("li").filter({ hasText: "Libre" });
+    habiaHuecos = (await huecos.count()) > 0;
+    if (habiaHuecos) {
+      await huecos.first().getByRole("button", { name: /Colocar/i }).click();
+      await page.waitForTimeout(800);
+
+      const dialogo = page.getByRole("dialog");
+      const abierto = await dialogo.isVisible();
+      const ofreceLaTarea = abierto && (await dialogo.getByText("Sacar al perro").count()) > 0;
+
+      // 40 minutos: no es lo que trae la tarea (no trae nada) ni el primer atajo, así
+      // que si el bloque sale con 40 es que el campo se usó de verdad.
+      if (ofreceLaTarea) {
+        await dialogo.getByLabel(/Cuánto rato te va a llevar/i).fill("40");
+        await dialogo.getByRole("button", { name: /^Colocar$/ }).click();
+        await page.waitForTimeout(2500);
+      }
+
+      const pintado = await page.evaluate(() => document.body.innerText);
+      placingOk = abierto && ofreceLaTarea && /Sacar al perro/.test(pintado);
+
+      // Y la línea y la carga lo dirán a la vez, que es el otro sitio donde esto puede
+      // descolocarse sin que se note en pantalla.
+      detalleColocada = await page.evaluate(async () => {
+        const token = localStorage.getItem("loopy_token");
+        const h = new Date();
+        const iso = `${h.getFullYear()}-${String(h.getMonth() + 1).padStart(2, "0")}-${String(h.getDate()).padStart(2, "0")}`;
+        const cab = { Authorization: `Bearer ${token}` };
+        const tl = await (await fetch(`http://localhost:5173/api/day-timeline?date=${iso}`, { headers: cab })).json();
+        const carga = await (await fetch(`http://localhost:5173/api/day-load?date=${iso}`, { headers: cab })).json();
+        const bloque = (tl.blocks ?? []).find((b) => b.kind === "tarea");
+        return {
+          minutes: bloque?.minutes ?? null,
+          loadBlocked: carga.blocked_minutes,
+          loadPlaced: carga.placed_minutes,
+          timelineBlocked: tl.blocked_minutes,
+        };
+      });
+
+      // 40 minutos, y los dos contadores de acuerdo.
+      placingOk =
+        placingOk
+        && detalleColocada.minutes === 40
+        && detalleColocada.loadBlocked === detalleColocada.timelineBlocked
+        && detalleColocada.loadPlaced === 40;
+
+      // Limpiar: la tarea colocada no puede quedarse ahí para los pasos siguientes.
+      await page.evaluate(async (id) => {
+        const token = localStorage.getItem("loopy_token");
+        const cab = { Authorization: `Bearer ${token}` };
+        await fetch(`http://localhost:5173/api/tasks/${id}/place`, { method: "DELETE", headers: cab });
+        await fetch(`http://localhost:5173/api/tasks/${id}`, { method: "DELETE", headers: cab });
+      }, tareaUI.id);
+    }
+  }
+
   // 4) El niño gestiona sus extraescolares y marca quién tiene que llevarle.
   // Hay que salir de la sesión del adulto antes: con el token vivo, `/nino`
   // redirige a "/" y el input del login se desmonta mientras se rellena.
@@ -196,6 +277,94 @@ export default async function run(page, ui) {
   const elAdultoLoLleva =
     enP_adulto.count === 1 && enP_adulto.affected.includes(nombre) && enP_adulto.minutes === 60;
 
+  // 5) Colocar una tarea en un hueco por la API. La pantalla ya se ha probado en 3b;
+  // aquí lo que importa es que la línea y la carga den el mismo número. Si el bloque
+  // saliera en una y no en la otra, la pantalla estaría enseñando dos versiones del
+  // mismo día, que es el fallo más caro y el más difícil de ver.
+  //
+  // El "antes" se lee aquí y no se copia de las aserciones de arriba a propósito: para
+  // cuando se llega aquí el niño ya ha marcado "me tienen que llevar", así que el lunes
+  // del adulto tiene una extraescolar compartida más y sus huecos no son los de la
+  // primera siembra. Comparar contra lo que había justo antes hace que la comprobación
+  // sea sobre el cambio y no sobre un decorado.
+  const colocada = await page.evaluate(
+    async ({ email, LUNES }) => {
+      const base = "http://localhost:5173";
+      const j = async (p, body, token, method) => {
+        const res = await fetch(base + p, {
+          method: method ?? (body ? "POST" : "GET"),
+          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        return { status: res.status, body: await res.json().catch(() => null) };
+      };
+      const sesion = await j("/api/auth/login", { email, password: "secreto123" });
+      const token = sesion?.body?.token;
+      const tarea = await j("/api/tasks", { title: "Poner la lavadora", category: "hogar", due_on: LUNES }, token);
+      const tl0 = await j(`/api/day-timeline?date=${LUNES}`, null, token);
+      const carga0 = await j(`/api/day-load?date=${LUNES}`, null, token);
+
+      // 25 minutos dentro del hueco 13:00-14:00, en UTC como espera el backend.
+      const placed = await j(`/api/tasks/${tarea?.body?.id}/place`, { start: `${LUNES}T13:00:00Z`, minutes: 25 }, token);
+      const tl = await j(`/api/day-timeline?date=${LUNES}`, null, token);
+      const carga = await j(`/api/day-load?date=${LUNES}`, null, token);
+      const bloque = tl?.body?.blocks?.find((b) => b.kind === "tarea");
+      const fmt = (t) => (t?.huecos ?? []).map((h) => `${h.start.slice(0, 5)}-${h.end.slice(0, 5)}`);
+
+      // Y quitarlo devuelve el hueco entero, que es la mitad de la promesa.
+      await j(`/api/tasks/${tarea?.body?.id}/place`, null, token, "DELETE");
+      const tl2 = await j(`/api/day-timeline?date=${LUNES}`, null, token);
+      const carga2 = await j(`/api/day-load?date=${LUNES}`, null, token);
+
+      return {
+        statusPlace: placed.status,
+        bloque: bloque ? { title: bloque.title, start: bloque.start.slice(0, 5), minutes: bloque.minutes, task_id: bloque.task_id } : null,
+        huecos0: fmt(tl0?.body),
+        huecos: fmt(tl?.body),
+        huecos2: fmt(tl2?.body),
+        blocked0: tl0?.body?.blocked_minutes ?? null,
+        free0: tl0?.body?.free_minutes ?? null,
+        blocked: tl?.body?.blocked_minutes ?? null,
+        free: tl?.body?.free_minutes ?? null,
+        cargaBlocked0: carga0?.body?.blocked_minutes ?? null,
+        cargaBlocked: carga?.body?.blocked_minutes ?? null,
+        cargaPlaced: carga?.body?.placed_minutes ?? null,
+        cargaTotal: carga?.body?.total_minutes ?? null,
+        cargaTareaMin: carga?.body?.task_minutes ?? null,
+        blocked2: tl2?.body?.blocked_minutes ?? null,
+        cargaBlocked2: carga2?.body?.blocked_minutes ?? null,
+      };
+    },
+    { email, LUNES },
+  );
+
+  // El bloque entra al principio del hueco, que es donde se coloca siempre: el tramo de
+  // las 13:00 se ocupa y el resto del hueco sigue siendo hueco, 25 minutos más corto.
+  const huecoSeAcorta =
+    colocada.huecos0.includes("13:00-14:00")
+    && colocada.huecos.includes("13:25-14:00")
+    && !colocada.huecos.includes("13:00-14:00");
+  const soloSeAcortaEse =
+    colocada.huecos.length === colocada.huecos0.length
+    && colocada.huecos.every((h) => h === "13:25-14:00" || colocada.huecos0.includes(h));
+  const bloqueAlPrincipio = colocada.bloque?.start === "13:00" && colocada.bloque?.minutes === 25;
+  const bloqueIdentificaLaTarea = typeof colocada.bloque?.task_id === "number";
+  // 25 minutos nuevos, y solo 25, en los dos sitios a la vez.
+  const sumaLoJusto =
+    colocada.blocked === colocada.blocked0 + 25 && colocada.cargaBlocked === colocada.blocked0 + 25;
+  const libreBajaLoJusto = colocada.free === colocada.free0 - 25;
+  const desgloseLoDice = colocada.cargaPlaced === 25;
+  // Sin estimación, la tarea no suma trabajo pendiente: su rato tiene que entrar por los
+  // bloqueados, no por sumar y restar los mismos 25 minutos.
+  const totalNoSeBorra = colocada.cargaTareaMin === 0 && colocada.cargaTotal === colocada.blocked;
+  // Ni un hueco de cero delante del bloque.
+  const sinHuecoFantasmaAlColocar = !colocada.huecos.some((h) => h === "13:00-13:00");
+  // Quitar no es borrar: el hueco vuelve a su medida y los dos números vuelven atrás.
+  const huecoVuelve =
+    JSON.stringify(colocada.huecos2) === JSON.stringify(colocada.huecos0)
+    && colocada.blocked2 === colocada.blocked0
+    && colocada.cargaBlocked2 === colocada.cargaBlocked0;
+
   return {
     muestraComida,
     muestraFranjaSinPlato,
@@ -215,5 +384,26 @@ export default async function run(page, ui) {
     huecos,
     ventanaCuadra,
     cargaMin: { citas: carga.appointment_minutes, total: carga.blocked_minutes },
+    placingOk,
+    colocaTarea: {
+      statusPlace: colocada.statusPlace === 200,
+      huecoSeAcorta,
+      soloSeAcortaEse,
+      bloqueAlPrincipio,
+      bloqueIdentificaLaTarea,
+      sumaLoJusto,
+      libreBajaLoJusto,
+      desgloseLoDice,
+      totalNoSeBorra,
+      sinHuecoFantasmaAlColocar,
+      huecoVuelve,
+      detalle: {
+        bloque: colocada.bloque,
+        huecosAntes: colocada.huecos0,
+        huecosColocada: colocada.huecos,
+        huecosTrasQuitar: colocada.huecos2,
+        cargaTotal: colocada.cargaTotal,
+      },
+    },
   };
 }

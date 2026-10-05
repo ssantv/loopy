@@ -441,6 +441,7 @@ async def day_load(
         extracurricular_minutes=carga.extracurricular_minutes,
         appointment_minutes=carga.appointment_minutes,
         appointments_count=carga.appointments_count,
+        placed_minutes=carga.placed_minutes,
     )
 
 

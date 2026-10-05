@@ -1,10 +1,10 @@
-"""Los bloques fijos de un día, en orden, y los huecos que quedan entre ellos.
+"""Los bloques de un día, en orden, y los huecos que quedan entre ellos.
 
 `day_load` responde cuánto ocupa el día. Esto responde **qué** lo ocupa y de quién
 es, que es lo que necesita el timeline para poder dibujar una línea honesta: un
-"60 min" sin nombre no dice si hay que llevar a alguien o si oneself tiene cita.
+"60 min" sin nombre no dice si hay que llevar a alguien o si uno mismo tiene cita.
 
-Cuatro tipos de bloque, y la diferencia importa al leerlos:
+Cinco tipos de bloque, y la diferencia importa al leerlos:
 
 - `cita`: la creó un adulto de la cuenta. Si además les afecta a niños, van en
   `affected`.
@@ -13,9 +13,12 @@ Cuatro tipos de bloque, y la diferencia importa al leerlos:
   **y** al adulto, que es justo lo que hace que el día del adulto pierda el hueco.
 - `comida`: una franja de comida activada. Solo se **muestra**: no resta de la
   carga del día (ver `Timeline`).
+- `tarea`: una tarea que el usuario colocó en un hueco concreto. A diferencia de los
+  otros, esta se puede mover o quitar desde la línea, y al colocarse pasa a ocupar
+  el rato (y a partirlo en dos huecos).
 
 Las compartidas se listan una vez por hijo, no unidas: para el cálculo de minutos sí
-se unen (ver `_minutos_unidos`), pero para mostrar hay que poder decir "llevar a
+se unen (ver `tramos.une`), pero para mostrar hay que poder decir "llevar a
 Lucía" y "llevar a Dani", que son dos viajes distintos aunque coincidan en hora.
 """
 
@@ -33,6 +36,7 @@ from app.models.menu import MealPlan, MealSlotConfig
 from app.models.user import User
 from app.services.appointments import citas_de
 from app.services.load import day_load
+from app.services.pending import DEFAULT_PLANNED_MINUTES, placed_tasks
 from app.services.schedule import extras_compartidas_de, load_school_calendar
 from app.services.tramos import une
 
@@ -40,6 +44,10 @@ CITA = "cita"
 EXTRAESCOLAR = "extraescolar"
 COMPARTIDA = "extraescolar_compartida"
 COMIDA = "comida"
+# La tarea que el usuario decidió meter en un hueco concreto. No es un bloque
+# "fijo" como una cita: es un plan, pero desde que se coloca ocupa el rato igual
+# que cualquier otra cosa, y por eso parte los huecos que lo rodean.
+TAREA = "tarea"
 
 # Cuánto dura cada franja de comida.
 #
@@ -69,7 +77,11 @@ class Bloque:
     affected: tuple[str, ...] = ()
     cita_id: int | None = None
     extra_id: int | None = None
+    task_id: int | None = None
     slot: str | None = None
+    # Las tareas del niño que ya hizo hoy, para pintarlas tachadas. `None` en el
+    # resto de bloques porque "hecho" solo tiene sentido para una tarea.
+    done: bool = False
 
 
 def _minutos(a: time, b: time) -> int:
@@ -183,6 +195,35 @@ async def _comidas_del_dia(db: AsyncSession, user: User, day: date) -> list[Bloq
     return bloques
 
 
+async def _tareas_colocadas(db: AsyncSession, user: User, day: date) -> list[Bloque]:
+    """Las tareas que el usuario metió en un hueco de `day`, como bloques de línea.
+
+    La consulta vive en `pending.placed_tasks` porque `day_load` necesita las mismas
+    filas para los minutos: el bloque que se pinta y el minuto que se cuenta tienen
+    que salir de la misma lista o la línea y la carga dirán cosas distintas del mismo
+    día.
+    """
+    bloques: list[Bloque] = []
+    for t, inicio in await placed_tasks(db, user, day):
+        minutos = t.planned_minutes or DEFAULT_PLANNED_MINUTES
+        desde_min = inicio.hour * 60 + inicio.minute
+        fin_min = min(desde_min + minutos, 24 * 60)
+        bloques.append(
+            Bloque(
+                kind=TAREA,
+                title=t.title,
+                start=time(inicio.hour, inicio.minute),
+                end=time(fin_min // 60, fin_min % 60),
+                minutes=fin_min - desde_min,
+                task_id=t.id,
+                # Hecho hoy: el rato se gastó, así que el bloque sigue ahí pero
+                # tachado. Borrarlo dejaría la línea mintiendo sobre la tarde.
+                done=any(c.done_on == day for c in t.completions),
+            )
+        )
+    return bloques
+
+
 async def day_blocks(db: AsyncSession, user: User, day: date) -> list[Bloque]:
     """Todo lo que ocupa `day` a `user`, de más temprano a más tarde.
 
@@ -239,6 +280,11 @@ async def day_blocks(db: AsyncSession, user: User, day: date) -> list[Bloque]:
     # Las comidas van al final y solo se pintan: se cuentan en los huecos, no en la
     # carga. Ver `Timeline`.
     bloques.extend(await _comidas_del_dia(db, user, day))
+
+    # Las tareas que el usuario colocó van con las comidas: son lo mismo para el
+    # efecto de partir huecos (ocupan un rato) pero se cuentan en la carga. Ver
+    # `Timeline`.
+    bloques.extend(await _tareas_colocadas(db, user, day))
 
     bloques.sort(key=lambda b: (b.start, b.end, b.title))
     return bloques

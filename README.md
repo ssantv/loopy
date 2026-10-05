@@ -4,9 +4,9 @@ App de organización personal multiusuario con **dos perfiles independientes por
 
 > Estado actual: el **modelo familiar** está cerrado — la cuenta del niño la crea un adulto y entra con nombre y PIN —, y el **contexto escolar** está montado: horario semanal, días sin cole, plantillas de deber y reparto del plan de estudio saltando los días sin clase, con tope diario de estudio por niño.
 >
-> **Mi día** está montada y es la pantalla principal: la línea del día con comidas y huecos, las citas y extraescolares que la ocupan, y lo que toca a cada uno. Las citas familiares (puntuales o semanales, y hasta cuando quieras repetirlas) ya se crean y se editan en ella.
+> **Mi día** está montada y es la pantalla principal: la línea del día con comidas y huecos, las citas y extraescolares que la ocupan, y lo que toca a cada uno. Las citas familiares (puntuales o semanales, y hasta cuando quieras repetirlas) ya se crean y se editan en ella. Cada hueco libre tiene un **+ Colocar** que mete una tarea de casa en ese rato: preguntar cuánto va a llevar y colocarla. Adulto y niño colocan igual, y una tarea ya hecha sigue ahí, tachada, porque el rato se gastó.
 >
-> Lo siguiente en el roadmap: **Organiza tu tarde** (adulto) → calendario y offline → cierre.
+> Lo siguiente en el roadmap: calendario y offline → cierre.
 
 ## Navegación
 

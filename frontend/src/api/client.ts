@@ -112,6 +112,10 @@ export interface Task {
   rotation_index: number | null;
   pending_from_class: boolean;
   est_minutes: number | null;
+  /** Instante con zona en el que el usuario colocó la tarea, o null si no está colocada. */
+  planned_start: string | null;
+  /** Cuánto ocupa la tarea colocada. Distinto de `est_minutes`: esta es la respuesta. */
+  planned_minutes: number | null;
   done_minutes: number;
   last_done_on: string | null;
   archived_at: string | null;
@@ -136,6 +140,21 @@ export const taskApi = {
   update: (id: number, payload: Partial<Task>) =>
     request<Task>(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
   remove: (id: number) => request<void>(`/api/tasks/${id}`, { method: "DELETE" }),
+  /**
+   * Coloca la tarea en el hueco que empieza en `start`.
+   *
+   * `start` se manda como ISO **en UTC** (`Date.toISOString()`), no como la hora que
+   * el usuario teclea: el backend guarda en UTC y lo devuelve en la zona del usuario,
+   * así que pasar la hora local haría que el servidor la leyera como si fuera de otro
+   * día. `minutes` es lo que contestó el usuario; si se omite al mover, el backend
+   * conserva la duración que ya tenía.
+   */
+  place: (id: number, start: Date, minutes?: number | null) =>
+    request<Task>(`/api/tasks/${id}/place`, {
+      method: "POST",
+      body: JSON.stringify({ start: start.toISOString(), minutes: minutes ?? undefined }),
+    }),
+  unplace: (id: number) => request<void>(`/api/tasks/${id}/place`, { method: "DELETE" }),
   complete: (id: number, done_on: string) =>
     request<{ id: number; done_on: string; rec_next_due: string | null }>(`/api/tasks/${id}/complete`, {
       method: "POST",
@@ -519,6 +538,8 @@ export interface DayLoad {
   extracurricular_minutes: number;
   appointment_minutes: number;
   appointments_count: number;
+  /** Minutos ocupados por tareas que el usuario ya colocó en un hueco hoy. */
+  placed_minutes: number;
 }
 
 export const dayLoadApi = {
@@ -546,8 +567,12 @@ export interface DayBlock {
   affected: string[];
   cita_id: number | null;
   extra_id: number | null;
+  /** Solo en tareas colocadas: permite moverla o quitarla desde la línea. */
+  task_id: number | null;
   /** Solo en comidas: "desayuno", "cena"… Distingue merienda de desayuno. */
   slot: string | null;
+  /** Solo en tareas colocadas: ya se hizo. El bloque sigue ahí (el rato se gastó). */
+  done: boolean;
 }
 
 /** Un tramo del horario en juego que no cubre ningún bloque. */

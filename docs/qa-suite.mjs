@@ -121,7 +121,7 @@ for (const guion of lista) {
   const plano = {};
   for (const [k, v] of Object.entries(datos)) {
     if (RUIDO.test(k) && !verbose) continue;
-    plano[k] = typeof v === "object" && v !== null ? JSON.stringify(v).slice(0, 90) : v;
+    plano[k] = typeof v === "object" && v !== null ? JSON.stringify(v).slice(0, verbose ? 4000 : 90) : v;
   }
   const falsos = Object.entries(plano).filter(([, v]) => v === false);
   if (falsos.length) rojos += 1;

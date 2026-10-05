@@ -14,6 +14,7 @@ import {
   type DayLoad,
   type DayTimeline,
   type DayBlock,
+  type Hueco,
   type Appointment,
   type AppointmentInput,
   type User,
@@ -48,6 +49,8 @@ import Dialog from "@mui/material/Dialog";
 import DialogTitle from "@mui/material/DialogTitle";
 import DialogContent from "@mui/material/DialogContent";
 import DialogActions from "@mui/material/DialogActions";
+import Radio from "@mui/material/Radio";
+import RadioGroup from "@mui/material/RadioGroup";
 import { alpha, type SxProps } from "@mui/material/styles";
 import CloseIcon from "@mui/icons-material/Close";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
@@ -183,6 +186,7 @@ export default function Home() {
   const [timeline, setTimeline] = useState<DayTimeline | null>(null);
   const [citas, setCitas] = useState<Appointment[]>([]);
   const [citaDialog, setCitaDialog] = useState<CitaDialogState | null>(null);
+  const [colocarEn, setColocarEn] = useState<Hueco | null>(null);
   const [ninos, setNinos] = useState<User[]>([]);
 
   // Los niños solo hacen falta para poder elegir a quién afecta una cita, y solo
@@ -411,6 +415,52 @@ export default function Home() {
     [loadCarga, loadDia],
   );
 
+  /**
+   * Coloca una tarea al principio de un hueco.
+   *
+   * Al empezar y no en medio a propósito: elegir dónde dentro del hueco es una
+   * decisión más que la mayoría de las veces no tiene respuesta buena, y un hueco de
+   * "17:00–18:00 libre" con una tarea de 25 minutos encima ya dice bastante.
+   *
+   * La hora local del hueco se convierte a un `Date` real antes de mandarla, porque
+   * `toISOString()` devuelve UTC y el backend guarda en UTC: construir el `Date` con
+   * las piezas sueltas (año, mes, día, hora) es lo único que hace que el navegador lo
+   * interprete en la zona del usuario y no en la del servidor.
+   */
+  const colocarTarea = useCallback(
+    async (hueco: Hueco, taskId: number, minutos: number | null) => {
+      try {
+        // El hueco solo trae la hora, así que la fecha se pega con la de hoy. Se
+        // descompone a piezas sueltas a propósito: `new Date("2026-10-04 17:00")` se
+        // interpretaría en UTC y movería el bloque de día según dónde esté el
+        // navegador, que es justo lo que este endpoint no quiere.
+        const [anio, mes, dia] = today.split("-").map(Number);
+        const [h, m] = hueco.start.split(":");
+        const cuando = new Date(anio, mes - 1, dia, Number(h), Number(m), 0, 0);
+        await taskApi.place(taskId, cuando, minutos);
+        setColocarEn(null);
+        // Igual que con las citas: la colocación mueve el bloque, los huecos y los
+        // minutos de la carga, y los tres salen del backend a la vez.
+        await Promise.all([loadDia(), loadCarga(), load()]);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Error al colocar la tarea");
+      }
+    },
+    [load, loadCarga, loadDia, today],
+  );
+
+  const quitarTarea = useCallback(
+    async (taskId: number) => {
+      try {
+        await taskApi.unplace(taskId);
+        await Promise.all([loadDia(), loadCarga(), load()]);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Error al quitar la tarea");
+      }
+    },
+    [load, loadCarga, loadDia],
+  );
+
   const abrirTemporizador = useCallback((focus: Focus) => {
     setTimerTarget({
       focus,
@@ -537,6 +587,8 @@ export default function Home() {
                 onNueva={() => setCitaDialog({ cita: null, fecha: today })}
                 onEditar={(c) => setCitaDialog({ cita: c, fecha: today })}
                 onBorrar={(id) => void borrarCita(id)}
+                onColocar={(h) => setColocarEn(h)}
+                onQuitar={(id) => void quitarTarea(id)}
               />
             )}
 
@@ -770,6 +822,15 @@ export default function Home() {
           ninos={ninos}
           onClose={() => setCitaDialog(null)}
           onSave={(cuerpo) => void guardarCita(citaDialog, cuerpo)}
+        />
+      )}
+
+      {colocarEn && (
+        <ColocarTareaDialog
+          hueco={colocarEn}
+          tareas={tasks}
+          onClose={() => setColocarEn(null)}
+          onPlace={(taskId, minutos) => void colocarTarea(colocarEn, taskId, minutos)}
         />
       )}
     </Box>
@@ -1464,7 +1525,7 @@ interface CitaDialogState {
 
 /** Una fila de la línea: o un hueco o un bloque que lo ocupa. */
 type Linea =
-  | { tipo: "hueco"; key: string; inicio: string; fin: string; minutos: number }
+  | { tipo: "hueco"; key: string; inicio: string; fin: string; minutos: number; hueco: Hueco }
   | { tipo: "bloque"; key: string; bloque: DayBlock };
 
 const BLOCK_LABEL: Record<string, string> = {
@@ -1472,6 +1533,7 @@ const BLOCK_LABEL: Record<string, string> = {
   extraescolar: "Extraescolar",
   extraescolar_compartida: "Llevar a",
   comida: "Comida",
+  tarea: "Tarea",
 };
 
 const BLOCK_COLOR: Record<string, string> = {
@@ -1479,6 +1541,7 @@ const BLOCK_COLOR: Record<string, string> = {
   extraescolar: "#6a1b9a",
   extraescolar_compartida: "#ef6c00",
   comida: "#558b2f",
+  tarea: "#0277bd",
 };
 
 /**
@@ -1510,6 +1573,8 @@ function TimelineDelDia({
   onNueva,
   onEditar,
   onBorrar,
+  onColocar,
+  onQuitar,
 }: {
   timeline: DayTimeline;
   /** Las citas completas de hoy, por id. El bloque solo trae el id. */
@@ -1518,6 +1583,8 @@ function TimelineDelDia({
   onNueva: () => void;
   onEditar: (c: Appointment) => void;
   onBorrar: (id: number) => void;
+  onColocar: (h: Hueco) => void;
+  onQuitar: (taskId: number) => void;
 }) {
   // Una sola lista mezclando huecos y bloques, en orden de hora. Separarlos en
   // "ocupaciones" y "citas" era más fácil de montar, pero obligaba a leer dos
@@ -1531,6 +1598,7 @@ function TimelineDelDia({
         inicio: h.start,
         fin: h.end,
         minutos: h.minutes,
+        hueco: h,
       })),
       ...timeline.blocks.map((b) => ({
         tipo: "bloque" as const,
@@ -1566,7 +1634,13 @@ function TimelineDelDia({
         <List sx={{ p: 0 }}>
           {lineas.map((l) =>
             l.tipo === "hueco" ? (
-              <HuecoRow key={l.key} inicio={l.inicio} fin={l.fin} minutos={l.minutos} />
+              <HuecoRow
+                key={l.key}
+                inicio={l.inicio}
+                fin={l.fin}
+                minutos={l.minutos}
+                onColocar={() => onColocar(l.hueco as Hueco)}
+              />
             ) : (
               <DayBlockRow
                 key={l.key}
@@ -1578,6 +1652,7 @@ function TimelineDelDia({
                     : undefined
                 }
                 onBorrar={esAdulto && l.bloque.cita_id ? () => onBorrar(l.bloque.cita_id as number) : undefined}
+                onQuitar={l.bloque.task_id !== null ? () => onQuitar(l.bloque.task_id as number) : undefined}
               />
             ),
           )}
@@ -1587,8 +1662,24 @@ function TimelineDelDia({
   );
 }
 
-/** Una franja sin nada encima: el rato donde sí se puede colocar algo. */
-function HuecoRow({ inicio, fin, minutos }: { inicio: string; fin: string; minutos: number }) {
+/**
+ * Una franja sin nada encima: el rato donde sí se puede colocar algo.
+ *
+ * El botón va siempre, también para los niños: organizar la tarde es exactamente lo
+ * que un niño quiere hacer, y quitarle el botón y dejarlo mirando huecos que no
+ * puede usar era una forma de enseñarle que la pantalla no era suya.
+ */
+function HuecoRow({
+  inicio,
+  fin,
+  minutos,
+  onColocar,
+}: {
+  inicio: string;
+  fin: string;
+  minutos: number;
+  onColocar: () => void;
+}) {
   return (
     <ListItem disableGutters>
       <Box sx={{ display: "flex", gap: 1, alignItems: "baseline", width: "100%" }}>
@@ -1598,12 +1689,12 @@ function HuecoRow({ inicio, fin, minutos }: { inicio: string; fin: string; minut
             {hhmm(inicio)}–{hhmm(fin)} · Libre
           </Typography>
           <Typography variant="caption" color="text.secondary" noWrap>
-            Hueco para colocar algo
+            {minutosLegibles(minutos)} libres
           </Typography>
         </Box>
-        <Typography variant="caption" color="text.secondary">
-          {minutosLegibles(minutos)}
-        </Typography>
+        <Button size="small" variant="text" onClick={onColocar}>
+          + Colocar
+        </Button>
       </Box>
     </ListItem>
   );
@@ -1614,23 +1705,33 @@ function DayBlockRow({
   esSemanal,
   onEditar,
   onBorrar,
+  onQuitar,
 }: {
   block: DayBlock;
   esSemanal?: boolean;
   onEditar?: () => void;
   onBorrar?: () => void;
+  onQuitar?: () => void;
 }) {
   const color = BLOCK_COLOR[block.kind] ?? "#616161";
   const etiqueta = block.affected.length > 0 ? ` · ${block.affected.join(", ")}` : "";
+  // Quitar no es borrar: la tarea sigue en su lista y el día vuelve a tener el hueco
+  // libre. El botón se llama "Quitar" por eso, y no "Borrar" como el de las citas.
+  const acciones = onEditar || onBorrar || onQuitar;
   return (
     <ListItem
       disableGutters
       secondaryAction={
-        onEditar || onBorrar ? (
+        acciones ? (
           <ListItemSecondaryAction>
             {onEditar && (
               <Button size="small" onClick={onEditar} aria-label={`Editar ${block.title}`}>
                 Editar
+              </Button>
+            )}
+            {onQuitar && (
+              <Button size="small" onClick={onQuitar} aria-label={`Quitar ${block.title} del hueco`}>
+                Quitar
               </Button>
             )}
             {onBorrar && (
@@ -1642,7 +1743,7 @@ function DayBlockRow({
         ) : undefined
       }
     >
-      <Box sx={{ display: "flex", gap: 1, alignItems: "baseline", width: "100%", pr: onEditar || onBorrar ? 14 : 0 }}>
+      <Box sx={{ display: "flex", gap: 1, alignItems: "baseline", width: "100%", pr: acciones ? 14 : 0 }}>
         <Box
           sx={{
             width: 4,
@@ -1653,7 +1754,11 @@ function DayBlockRow({
           }}
         />
         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-          <Typography variant="body2" sx={{ fontWeight: 600 }} noWrap>
+          <Typography
+            variant="body2"
+            sx={{ fontWeight: 600, textDecoration: block.done ? "line-through" : "none" }}
+            noWrap
+          >
             {hhmm(block.start)}–{hhmm(block.end)} · {block.title}
           </Typography>
           <Typography variant="caption" color="text.secondary" noWrap>
@@ -1661,6 +1766,7 @@ function DayBlockRow({
             {esSemanal ? " · cada semana" : ""}
             {etiqueta}
             {block.place ? ` · ${block.place}` : ""}
+            {block.done ? " · hecha" : ""}
           </Typography>
         </Box>
         <Typography variant="caption" color="text.secondary">
@@ -1805,6 +1911,140 @@ function CitaDialog({
         <Button onClick={onClose}>Cancelar</Button>
         <Button variant="contained" onClick={guardar} disabled={invalido}>
           Guardar
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+/** Tareas que tienen sentido colocar: las que tocan hoy y las que se quedaron atrás. */
+const CATEGORIAS_PLACEABLE: Record<string, string> = {
+  hogar: "Casa",
+  estudio: "Estudio",
+  trabajo: "Trabajo",
+  salud: "Salud",
+  deporte: "Deporte",
+  otro: "Otro",
+};
+
+/**
+ * Colocar una tarea en un hueco.
+ *
+ * Se pregunta la duración en vez de suponerla. Se podría heredar de `est_minutes`, pero
+ * esa estimación es para el reparto de estudio y casi nunca está puesta en una tarea de
+ * casa: preguntándosela al usuario, "colocar" es una decisión y no un trámite. El hueco
+ * de al lado dice cuánto cabe, que es justo el número que hace falta sin adivinar.
+ */
+function ColocarTareaDialog({
+  hueco,
+  tareas,
+  onClose,
+  onPlace,
+}: {
+  hueco: Hueco;
+  tareas: Task[];
+  onClose: () => void;
+  onPlace: (taskId: number, minutos: number | null) => void;
+}) {
+  // Las tareas ya colocadas no salen: volver a colocar la misma desde aquí solo generaría
+  // dos bloques del mismo título en el mismo día.
+  const disponibles = useMemo(() => tareas.filter((t) => t.planned_start === null), [tareas]);
+  const [id, setId] = useState<number | null>(disponibles[0]?.id ?? null);
+  const elegida = disponibles.find((t) => t.id === id) ?? null;
+
+  const suggestions = useMemo(() => {
+    // Los minutos que caben, redondeados a algo que alguien pueda elegir sin hacer
+    // cuentas: media hora, y a partir de ahí cada cuarto.
+    const out: number[] = [];
+    for (let m = 15; m <= hueco.minutes; m += 15) out.push(m);
+    return out;
+  }, [hueco.minutes]);
+
+  const [minutos, setMinutos] = useState<string>(() => {
+    const deTarea = elegida?.planned_minutes ?? elegida?.est_minutes ?? null;
+    if (deTarea && deTarea <= hueco.minutes) return String(deTarea);
+    const masCorto = suggestions[0];
+    return masCorto ? String(masCorto) : "";
+  });
+
+  const alElegir = (valor: number | null) => {
+    setId(valor);
+    const t = disponibles.find((x) => x.id === valor);
+    const deTarea = t?.planned_minutes ?? t?.est_minutes ?? null;
+    if (deTarea && deTarea <= hueco.minutes) setMinutos(String(deTarea));
+    else if (suggestions[0]) setMinutos(String(suggestions[0]));
+  };
+
+  const n = Number(minutos);
+  const cabe = Number.isFinite(n) && n > 0 && n <= hueco.minutes;
+  const sinTareas = disponibles.length === 0;
+
+  return (
+    <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>Colocar en el hueco de {hhmm(hueco.start)}</DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} sx={{ mt: 0.5 }}>
+          {sinTareas ? (
+            <Alert severity="info">
+              No tienes tareas pendientes ni atrasadas que colocar. Crea una primero.
+            </Alert>
+          ) : (
+            <>
+              <Box>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                  Qué quieres colocar
+                </Typography>
+                <RadioGroup value={id === null ? "" : String(id)} onChange={(e) => alElegir(Number(e.target.value))}>
+                  {disponibles.map((t) => (
+                    <FormControlLabel
+                      key={t.id}
+                      value={String(t.id)}
+                      control={<Radio inputProps={{ "aria-label": t.title }} />}
+                      label={
+                        <>
+                          <Typography variant="body2">{t.title}</Typography>
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            {CATEGORIAS_PLACEABLE[t.category] ?? t.category}
+                            {t.pending && t.pending < todayISO() ? " · atrasada" : ""}
+                          </Typography>
+                        </>
+                      }
+                    />
+                  ))}
+                </RadioGroup>
+              </Box>
+
+              <TextField
+                label="Cuánto rato te va a llevar"
+                type="number"
+                value={minutos}
+                onChange={(e) => setMinutos(e.target.value)}
+                slotProps={{ htmlInput: { min: 1, max: hueco.minutes } }}
+                helperText={`En el hueco caben ${minutosLegibles(hueco.minutes)}.`}
+                fullWidth
+              />
+
+              {suggestions.length > 0 && (
+                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                  {suggestions.slice(0, 6).map((m) => (
+                    <Chip
+                      key={m}
+                      label={minutosLegibles(m)}
+                      onClick={() => setMinutos(String(m))}
+                      color={String(m) === minutos ? "primary" : "default"}
+                      variant={String(m) === minutos ? "filled" : "outlined"}
+                    />
+                  ))}
+                </Stack>
+              )}
+            </>
+          )}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Cancelar</Button>
+        <Button variant="contained" disabled={sinTareas || id === null || !cabe} onClick={() => id !== null && onPlace(id, n)}>
+          Colocar
         </Button>
       </DialogActions>
     </Dialog>

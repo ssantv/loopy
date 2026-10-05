@@ -11,6 +11,7 @@ CITA = "cita"
 EXTRAESCOLAR = "extraescolar"
 COMPARTIDA = "extraescolar_compartida"
 COMIDA = "comida"
+TAREA = "tarea"
 
 
 class DayBlockOut(BaseModel):
@@ -22,6 +23,10 @@ class DayBlockOut(BaseModel):
     `slot` solo lo traen las comidas (`desayuno`, `cena`…): es lo que distingue un
     café de las diez de un tentempié de las cinco cuando el menú no tiene nada
     planificado y el título se queda en el nombre de la franja.
+
+    `task_id` y `done` solo los traen las tareas colocadas: `task_id` permite quitar
+    o mover el bloque desde la línea, y `done` dice que ya se hizo (el rato se gastó,
+    por eso el bloque sigue ahí, pero tachado).
     """
 
     kind: str
@@ -33,7 +38,9 @@ class DayBlockOut(BaseModel):
     affected: list[str] = []
     cita_id: int | None = None
     extra_id: int | None = None
+    task_id: int | None = None
     slot: str | None = None
+    done: bool = False
 
 
 class HuecoOut(BaseModel):

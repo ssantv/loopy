@@ -98,6 +98,20 @@ class Task(Base):
     # mañana sino para el siguiente lunes que haya clase. `due_on` se queda
     # fijo en esa fecha aunque el plazo pase, y el deber sigue pendiente.
     assigned_on: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+
+    # --- Cuándo se hace ---
+    #
+    # `planned_start` es el hueco que el usuario le ha asignado a esta tarea, y a
+    # partir de ahí ocupa la línea del día como cualquier otra cosa. Es distinto de
+    # `assigned_on` (el día en que se encarga) y de `due_on` (la fecha límite): una
+    # tarea puede estar cargada para hoy y decidirse que se hace el jueves.
+    #
+    # No se reutiliza `est_minutes` para la duración porque ese campo alimenta el
+    # reparto de estudio del niño: la duración de lo colocado la contesta el usuario
+    # al colocarlo, no es una estimación.
+    planned_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    planned_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     # Quién la creó. Lo rellena el adulto cuando le asigna un encargo al niño,
     # para poder listar y cancelar lo que le ha mandado.
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

@@ -12,7 +12,7 @@ respeta el contrato del motor (Planteamiento §6):
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime, time, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,76 @@ from app.models.task import Task, TaskCompletion
 from app.models.user import User
 from app.services.engine import REAL_FAMILY, as_rules, compute_next_cursor
 from app.services.home import task_pending
+from app.services.notify import tz_of
+
+# Cuánto ocupa una tarea colocada a la que el usuario no le dijo duración. Está aquí y
+# no en `day` porque lo necesitan los dos consumidores de `placed_tasks` (el bloque que
+# se pinta y los minutos que se cuentan), y `day` importa a `load` mientras `load`
+# necesita el mismo número: en un sitio común no puede haber dos respuestas.
+DEFAULT_PLANNED_MINUTES = 30
+
+
+def en_utc(valor: datetime) -> datetime:
+    """Interpreta un `DateTime(timezone=True)` leído de SQLite como UTC.
+
+    SQLite no guarda el offset: un `DateTime(timezone=True)` de SQLAlchemy sale de
+    ahí **sin zona**, aunque la columna la declare con zona. Si se llama a
+    `.astimezone()` sobre un valor así, Python lo toma como hora local **del
+    servidor**, y una tarea colocada a las 18:00 se escondería a las 16:00 en un
+    servidor de Madrid y a las 12:00 en uno de Chile, según dónde esté la máquina.
+    Por eso toda datetime que venga de la base se pasa por aquí antes de convertirla
+    a la zona del usuario.
+    """
+    return valor if valor.tzinfo is not None else valor.replace(tzinfo=UTC)
+
+
+async def placed_tasks(db: AsyncSession, user: User, day: date) -> list[tuple[Task, datetime]]:
+    """Las tareas de `user` que colocó en un hueco de `day`, con su hora local.
+
+    Vive aquí y no en `day.py` porque **dos** cosas necesitan exactamente la misma
+    pregunta: el timeline, para pintar los bloques, y `day_load`, para sumarlos a los
+    minutos ocupados. Si cada uno filtrara por su cuenta, el bloque "18:00–18:25" y
+    los "25 minutos" que dice la carga podrían salir de reglas distintas y la pantalla
+    mostraría dos números que no cuadran.
+
+    Solo las que tienen `planned_start`: una tarea sin colocar no ocupa ningún rato
+    porque hasta que el usuario decide cuándo se hace, esa hora no existe.
+
+    El filtro por día va en Python a propósito. `planned_start` es un instante dentro
+    del día local del usuario, así que "las del día 17" en Madrid empieza a las 23:00
+    del día 16 en UTC. Traer un margen en UTC y descartar por la fecha local evita
+    tener que decidir en SQL qué día es el del usuario.
+    """
+    tz = tz_of(user)
+    desde = datetime.combine(day - timedelta(days=1), time.min, tzinfo=tz).astimezone(UTC)
+    hasta = datetime.combine(day + timedelta(days=1), time.min, tzinfo=tz).astimezone(UTC)
+
+    filas = (
+        (
+            await db.execute(
+                select(Task)
+                .options(selectinload(Task.completions))
+                .where(
+                    Task.user_id == user.id,
+                    Task.archived_at.is_(None),
+                    Task.planned_start.is_not(None),
+                    Task.planned_start >= desde,
+                    Task.planned_start < hasta,
+                )
+                .order_by(Task.planned_start)
+            )
+        )
+        .scalars()
+        .unique()
+        .all()
+    )
+
+    salida: list[tuple[Task, datetime]] = []
+    for t in filas:
+        inicio = en_utc(t.planned_start).astimezone(tz)  # type: ignore[arg-type]
+        if inicio.date() == day:
+            salida.append((t, inicio))
+    return salida
 
 
 async def pending_items(db: AsyncSession, user: User, today: date) -> tuple[list[Task], list[Task]]:

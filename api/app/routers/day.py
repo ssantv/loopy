@@ -42,7 +42,9 @@ async def get_day_timeline(
                 affected=list(b.affected),
                 cita_id=b.cita_id,
                 extra_id=b.extra_id,
+                task_id=b.task_id,
                 slot=b.slot,
+                done=b.done,
             )
             for b in tl.blocks
         ],

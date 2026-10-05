@@ -13,6 +13,7 @@ from app.models.user import User
 from app.routers.auth import get_current_user
 from app.schemas.task import (
     CompleteRequest,
+    PlaceTaskRequest,
     RoomCreate,
     RoomOut,
     RoomUpdate,
@@ -26,6 +27,8 @@ from app.schemas.task import (
 )
 from app.services.engine import TaskRules, compute_next_cursor
 from app.services.home import task_pending
+from app.services.notify import tz_of
+from app.services.pending import en_utc
 
 router = APIRouter(prefix="/api", tags=["tasks"])
 
@@ -79,6 +82,13 @@ def _serialize(task: Task, today: date | None = None) -> dict:
         "rotation_index": task.rotation_index,
         "pending_from_class": task.pending_from_class,
         "est_minutes": task.est_minutes,
+        # Sale con zona explícita a propósito. Leída de SQLite, la columna la
+        # declara con zona pero el valor vuelve sin ella, y un "2026-09-21T13:00:00"
+        # sin "Z" lo lee `new Date()` como las 13:00 **del navegador**: una hora
+        # distinta según dónde esté el cliente, que es justo lo que se guardó para
+        # evitar. Pasarlo por `en_utc` deja claro que ese reloj es UTC.
+        "planned_start": en_utc(task.planned_start) if task.planned_start else None,
+        "planned_minutes": task.planned_minutes,
         "done_minutes": task.done_minutes,
         "last_done_on": task.last_done_on,
         "archived_at": task.archived_at,
@@ -142,6 +152,62 @@ async def update_task(
     await db.commit()
     await db.refresh(task)
     return TaskOut(**_serialize(task, datetime.now(UTC).date()))
+
+
+# ---------------------------------------------------------------- colocacion
+
+@router.post("/tasks/{task_id}/place", response_model=TaskOut)
+async def place_task(
+    task_id: int, payload: PlaceTaskRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> TaskOut:
+    """Coloca la tarea en el hueco que empieza en `payload.start`.
+
+    Colocarla no la da por hecha ni le cambia la fecha límite: solo decide **cuándo**
+    se hace, que es lo que la línea necesita para pintar el bloque y partir el hueco.
+    Si la tarea estaba en otro sitio, se mueve (volver a llamar con otra hora la
+    recoloca), porque "mover" y "colocar" son el mismo gesto con distinto final.
+
+Acepta `minutes` en cualquiera de los dos casos:
+    - Si viene, es lo que el usuario contestó al colocar y manda sobre cualquier
+      estimación previa.
+    - Si no viene, se conserva el `planned_minutes` que ya tuviera (mover sin volver
+      a preguntar), y si tampoco lo tiene se usa `DEFAULT_PLANNED_MINUTES`.
+
+    La hora se guarda **en UTC** a propósito. SQLite tira el offset al escribir, así
+    que lo único que sobrevive es la hora de reloj: si se guardara la hora local tal
+    cual, un servidor en Chile leería de vuelta una hora distinta a la que se escribió.
+    Convertir a UTC antes y devolver la zona al leer (`pending._en_utc`) es lo que hace
+    que dé igual dónde esté el servidor.
+    """
+    task = await _get_owned_task(task_id, user, db)
+    inicio = payload.start
+    if inicio.tzinfo is None:
+        # Sin zona no se sabe qué quería decir el cliente. Se lee como hora del
+        # usuario, que es lo que alguien que teclea "18:00" quiere decir, y no como
+        # UTC, que es un detalle de la máquina.
+        inicio = inicio.replace(tzinfo=tz_of(user))
+    task.planned_start = inicio.astimezone(UTC)
+    task.planned_minutes = payload.minutes or task.planned_minutes
+    await db.commit()
+    await db.refresh(task)
+    return TaskOut(**_serialize(task, datetime.now(UTC).date()))
+
+
+@router.delete("/tasks/{task_id}/place", status_code=status.HTTP_204_NO_CONTENT)
+async def unplace_task(
+    task_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> None:
+    """Quita la tarea de la línea sin borrarla.
+
+    Solo se limpian las dos columnas de colocación: la tarea sigue pendiente y sigue
+    en "qué toca hoy". Guardar el `planned_minutes` tampoco hace falta —si se vuelve a
+    colocar más tarde se puede volver a preguntar— y borrarlo sería tirar información
+    que el usuario ya dio.
+    """
+    task = await _get_owned_task(task_id, user, db)
+    task.planned_start = None
+    task.planned_minutes = None
+    await db.commit()
 
 
 @router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
