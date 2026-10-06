@@ -1,4 +1,5 @@
 import { SEGUNDOS_TIMEOUT } from "../offline";
+import { definirEnvio, escribir } from "../cola";
 
 export interface User {
   id: number;
@@ -90,31 +91,64 @@ export class ApiError extends Error {
 export class OfflineError extends ApiError {
   constructor() {
     super(0, "Sin conexión. No se ha podido hablar con el servidor.");
+    // El `name` no es decorativo: la cola de escrituras no puede importar esta clase
+    // sin crear un ciclo, así que distingue "no hubo red" de "el servidor dijo que no"
+    // mirando `name === "OfflineError"`. Sin esta línea, una subclase de `Error` en
+    // JavaScript hereda `"Error"` y la cola trataría cada corte de red como un
+    // fallo del servidor y tiraría la escritura en vez de dejarla para cuando vuelva.
+    this.name = "OfflineError";
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+// La cola necesita mandar escrituras y preguntar "¿han ido bien?", y quien sabe
+// hacerlo es este archivo: es el dueño del token y del reloj. Se le inyecta aquí,
+// al final, para que `cola.ts` no dependa de nada y se pueda probar sola.
+definirEnvio(enviar);
+
+/**
+ * Habla con el servidor sin cuerpo, y devuelve lo que sea que conteste.
+ *
+ * Es la función que se le inyecta a la cola de escrituras (`cola.ts`). Existe suelta y
+ * no solo como parte de `request` porque la cola necesita mandar un `POST`/`DELETE`
+ * guardando la respuesta solo para "ha ido bien": si usara `request`, un `204` o un
+ * `DELETE` sin cuerpo reventaría al pedirle un JSON que no existe, y eso es un fallo
+ * que solo aparecería sin red, que es justo cuando más daño hace.
+ */
+async function enviar(metodo: "POST" | "DELETE", ruta: string, cuerpo: string | null): Promise<void> {
+  await peticion(metodo, ruta, cuerpo === null ? undefined : cuerpo);
+}
+
+/**
+ * La petición en sí: token, reloj y errores. No lee el cuerpo de la respuesta.
+ *
+ * Está en un solo sitio a propósito. Cuando la cola de escrituras pidió mandar
+ * `POST` y `DELETE` sueltos, lo primero que salió fueron dos copias de este bloque, y
+ * las dos se movieron distinto enseguida: la nueva no escuchaba el `signal` de quien
+ * llamara. Un `fetch` duplicado es un `fetch` que un día arregla una persona y no la
+ * otra.
+ *
+ * Dos reglas que no se pueden quitar:
+ *
+ * - El reloj son **milisegundos**. Pasar el número de segundos tal cual corta cada
+ *   petición a los 30 ms y todo falla como "Sin conexión" sin que haya red. Ya pasó, y
+ *   el síntoma (la pantalla de login siempre vacía) no señalaba ni el reloj ni el
+ *   abort: señalaba la red.
+ * - Un `fetch` sin reloj se queda esperando para siempre si el servidor acepta la
+ *   conexión y luego no contesta. Eso no es un error que se vea: es una pantalla que no
+ *   se mueve y un botón que no responde, que es la peor forma de fallar.
+ */
+async function peticion(metodo: string, path: string, cuerpo?: string, signal?: AbortSignal | null): Promise<Response> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  // Un `fetch` sin reloj se queda esperando para siempre si el servidor acepta la
-  // conexión y luego no contesta. Eso no es un error que se vea: es una pantalla que
-  // no se mueve y un botón que no responde, que es la peor forma de fallar porque no
-  // parece un fallo. Quien traiga su propio `signal` manda él, que es lo que hace
-  // falta para abortar a mano.
-  //
-  // Ojo con el reloj: son milisegundos, y si se pasa el número de segundos tal cual
-  // cada petición se corta a los 30 ms y todo falla con "Sin conexión" sin que haya
-  // red. Ya pasó, y el síntoma (la pantalla de login siempre vacía) no señalaba ni el
-  // reloj ni el abort: señalaba la red.
   const control = new AbortController();
   const reloj = setTimeout(() => control.abort(), SEGUNDOS_TIMEOUT * 1000);
-  init?.signal?.addEventListener("abort", () => control.abort());
+  signal?.addEventListener("abort", () => control.abort());
 
   let res: Response;
   try {
-    res = await fetch(path, { ...init, headers, signal: control.signal });
+    res = await fetch(path, { method: metodo, headers, body: cuerpo, signal: control.signal });
   } catch {
     // `fetch` solo rechaza así cuando no hubo respuesta útil: sin red, servidor caído,
     // CORS, o el reloj de arriba. Ninguna de esas cosas la arregla reintentar aquí.
@@ -122,16 +156,37 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   } finally {
     clearTimeout(reloj);
   }
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = await res.json();
-      if (body.detail) detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
-    } catch {
-      /* cuerpo no JSON */
-    }
-    throw new ApiError(res.status, detail);
+  if (!res.ok) throw new ApiError(res.status, await detalleDeError(res));
+  return res;
+}
+
+/** El `detail` del servidor, o el texto de estado si no viene en JSON. */
+async function detalleDeError(res: Response): Promise<string> {
+  let detail = res.statusText;
+  try {
+    const body = await res.json();
+    if (body.detail) detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+  } catch {
+    /* cuerpo no JSON */
   }
+  return detail;
+}
+
+/**
+ * La petición de siempre: devuelve el JSON que conteste el servidor.
+ *
+ * No reintenta, no encola y no recuerda nada. Lo que sí hace es dejar los errores en un
+ * idioma que se pueda enseñar: un `OfflineError` cuando no hubo respuesta y un
+ * `ApiError` con el `detail` del servidor cuando la hubo. Quien quiera reintentar o
+ * guardar para después, lo hace por encima (`cola.ts`).
+ */
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await peticion(
+    init?.method ?? "GET",
+    path,
+    typeof init?.body === "string" ? init.body : undefined,
+    init?.signal ?? null,
+  );
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
@@ -224,18 +279,20 @@ export const taskApi = {
    * día. `minutes` es lo que contestó el usuario; si se omite al mover, el backend
    * conserva la duración que ya tenía.
    */
+  // Estas cuatro van por la cola de escrituras (`cola.ts`): si no hay red se guardan
+  // para mandarlas luego en vez de fallar. Devuelven un `EstadoEscritura` de tres
+  // estados, para que quien llama distinga "lo ha guardado el servidor" de "no se ha
+  // podido guardar en ningún sitio": en el primer caso no hay nada que decir, y en el
+  // segundo hay que avisar en voz alta o la acción se pierde callada.
   place: (id: number, start: Date, minutes?: number | null) =>
-    request<Task>(`/api/tasks/${id}/place`, {
-      method: "POST",
-      body: JSON.stringify({ start: start.toISOString(), minutes: minutes ?? undefined }),
+    escribir<null>("POST", `/api/tasks/${id}/place`, {
+      start: start.toISOString(),
+      minutes: minutes ?? undefined,
     }),
-  unplace: (id: number) => request<void>(`/api/tasks/${id}/place`, { method: "DELETE" }),
-  complete: (id: number, done_on: string) =>
-    request<{ id: number; done_on: string; rec_next_due: string | null }>(`/api/tasks/${id}/complete`, {
-      method: "POST",
-      body: JSON.stringify({ done_on }),
-    }),
-  undo: (id: number, done_on: string) => request<void>(`/api/tasks/${id}/complete/${done_on}`, { method: "DELETE" }),
+  unplace: (id: number) => escribir<null>("DELETE", `/api/tasks/${id}/place`, null),
+  complete: (id: number, done_on: string) => escribir<null>("POST", `/api/tasks/${id}/complete`, { done_on }),
+  undo: (id: number, done_on: string) =>
+    escribir<null>("DELETE", `/api/tasks/${id}/complete/${done_on}`, null),
   advance: (id: number) =>
     request<{ id: number; done_on: string; rec_next_due: string | null }>(`/api/tasks/${id}/advance`, {
       method: "POST",

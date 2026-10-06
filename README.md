@@ -6,9 +6,9 @@ App de organización personal multiusuario con **dos perfiles independientes por
 >
 > **Mi día** está montada y es la pantalla principal: la línea del día con comidas y huecos, las citas y extraescolares que la ocupan, y lo que toca a cada uno. Las citas familiares (puntuales o semanales, y hasta cuando quieras repetirlas) ya se crean y se editan en ella. Cada hueco libre tiene un **+ Colocar** que mete una tarea de casa en ese rato: preguntar cuánto va a llevar y colocarla. Adulto y niño colocan igual, y una tarea ya hecha sigue ahí, tachada, porque el rato se gastó.
 >
-> La app también **se abre sin conexión**: cualquier pantalla sigue arrancando y se ven los últimos datos leídos, con un aviso de "Sin conexión" que desaparece al volver la red. Abrirla sin red ya no echa a la familia de la sesión, y guardar algo nuevo sin red todavía no se puede (falta la cola de escrituras).
+> La app también **funciona sin conexión**: cualquier pantalla sigue arrancando y se ven los últimos datos leídos, con un aviso de "Sin conexión" que desaparece al volver la red. Abrirla sin red ya no echa a la familia de la sesión, y **se puede seguir trabajando**: marcar y desmarcar tareas, y colocar y quitar tareas de un hueco, se guardan en una cola y se mandan solos al volver la red. Si el servidor no acepta un cambio, **manda el servidor** y te avisa de qué no se ha podido guardar. Lo demás (crear o editar tareas, menú, citas) sigue sin poder guardarse sin red, a propósito.
 >
-> Lo siguiente en el roadmap: la cola de escrituras sin conexión → cierre.
+> Lo siguiente en el roadmap: decidir si la cola crece hacia el resto de escrituras → cierre.
 
 ## Navegación
 
@@ -133,7 +133,7 @@ npm run qa
 npm run qa -- --solo=home     # un subconjunto, para iterar
 ```
 
-Tres guiones (`qa-prueba-session.mjs`, `qa-push-ui.mjs` y `qa-offline.mjs`) no funcionan contra el servidor de desarrollo: esperan `navigator.serviceWorker`, y Vite solo registra el service worker en el build de producción. Cada guion declara si los necesita (`necesitaBuild`), así que la suite los deja fuera en vez de fingir que pasaron, y van en su propia pasada:
+Cuatro guiones (`qa-prueba-session.mjs`, `qa-push-ui.mjs`, `qa-offline.mjs` y `qa-cola.mjs`) no funcionan contra el servidor de desarrollo: esperan `navigator.serviceWorker`, y Vite solo registra el service worker en el build de producción. Cada guion declara si los necesita (`necesitaBuild`), así que la suite los deja fuera en vez de fingir que pasaron, y van en su propia pasada:
 
 ```bash
 cd frontend
@@ -147,6 +147,13 @@ npm run qa:build
 ```bash
 cd frontend
 npm run qa:offline
+```
+
+`qa:cola` es el de las escrituras sin conexión: marca y desmarca una tarea sin red y mira lo que queda en IndexedDB **en orden**, coloca otra, vuelve la red y comprueba contra el servidor real que todo acaba como decía la pantalla, y que un cambio que el servidor rechaza avisa y no se queda colgando:
+
+```bash
+cd frontend
+npm run qa:cola
 ```
 
 Ver la planificación funcional completa en [`Planteamiento.md`](Planteamiento.md).

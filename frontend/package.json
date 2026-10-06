@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "qa": "node ../docs/qa-suite.mjs",
     "qa:build": "node ../docs/qa-suite.mjs --build",
-    "qa:offline": "node ../docs/qa-suite.mjs --build --solo=offline"
+    "qa:offline": "node ../docs/qa-suite.mjs --build --solo=offline",
+    "qa:cola": "node ../docs/qa-suite.mjs --build --solo=cola"
   },
   "dependencies": {
     "@emotion/react": "^11.13.0",

@@ -81,6 +81,15 @@ export default function Casa() {
     void load();
   }, [load]);
 
+  // Cuando la cola de escrituras consigue mandar algo, lo pintado aquí era provisional.
+  // Se escucha el evento y no se recarga, porque recargar dejaría al usuario en la
+  // pestaña de la habitación con la que entró, y no en la que está mirando.
+  useEffect(() => {
+    const alGuardar = () => void load();
+    window.addEventListener("loopy:datos-guardados", alGuardar);
+    return () => window.removeEventListener("loopy:datos-guardados", alGuardar);
+  }, [load]);
+
   useEffect(() => {
     // `segment === "subscribed"` es lo único que importa; si el push no está
     // configurado en el servidor, `enabled` sale false y no hay nada que avise.
@@ -105,20 +114,65 @@ export default function Casa() {
     [],
   );
 
+  /**
+   * Marca o desmarca la tarea en todos los sitios donde puede aparecer.
+   *
+   * En Casa la misma tarea vive en el grupo de su habitación o en "sin habitación", y
+   * puede estar a la vez en "pendientes" y en "adelantadas". Toca todos los grupos a
+   * propósito: si solo se tocara el que se ha visto, la otra lista seguiría mintiendo
+   * al usuario sobre lo que ha hecho.
+   */
+  const marcarEnTodos = useCallback(
+    (grupos: HomeItem[], id: number, day: string, hecho: boolean): HomeItem[] =>
+      grupos.map((i) => {
+        if (i.id !== id) return i;
+        return { ...i, done: hecho ? [...new Set([...i.done, day])] : i.done.filter((d) => d !== day) };
+      }),
+    [],
+  );
+
+  const marcarEnPantalla = useCallback(
+    (id: number, day: string, hecho: boolean) => {
+      setHome((h) =>
+        h
+          ? {
+              ...h,
+              rooms: h.rooms.map((r) => ({
+                ...r,
+                pending: marcarEnTodos(r.pending, id, day, hecho),
+                ahead: marcarEnTodos(r.ahead, id, day, hecho),
+              })),
+              no_room: {
+                ...h.no_room,
+                pending: marcarEnTodos(h.no_room.pending, id, day, hecho),
+                ahead: marcarEnTodos(h.no_room.ahead, id, day, hecho),
+              },
+            }
+          : h,
+      );
+    },
+    [marcarEnTodos],
+  );
+
   const toggleToday = useCallback(
     async (item: HomeItem) => {
+      const isDone = item.done.includes(today);
       try {
-        if (item.done.includes(today)) {
-          await taskApi.undo(item.id, today);
-        } else {
-          await taskApi.complete(item.id, today);
+        const escrito = isDone ? await taskApi.undo(item.id, today) : await taskApi.complete(item.id, today);
+        if (escrito.estado === "fallo") {
+          setError("Sin conexión y sin almacenamiento: no se ha podido guardar el cambio.");
+          return;
+        }
+        if (escrito.estado === "encolada") {
+          marcarEnPantalla(item.id, today, !isDone);
+          return;
         }
         await load();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Error al actualizar la tarea");
       }
     },
-    [today, load],
+    [today, load, marcarEnPantalla],
   );
 
   const advance = useCallback(

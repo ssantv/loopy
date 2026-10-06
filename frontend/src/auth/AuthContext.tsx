@@ -11,6 +11,7 @@ import {
   type User,
 } from "../api/client";
 import { CACHE_LECTURAS } from "../offline";
+import { vaciar } from "../cola";
 
 interface AuthContextValue {
   user: User | null;
@@ -111,6 +112,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // `caches` no existe en algunos navegadores antiguos y el cierre de sesión no
       // puede fallar por eso.
       if ("caches" in window) await caches.delete(CACHE_LECTURAS).catch(() => {});
+      // Y la cola de escrituras se borra por lo mismo, pero con una diferencia: no
+      // es solo información privada, son acciones sin mandar que se ejecutarán con el
+      // Si el menor marca una tarea sin red, su hermano se encontraría la tarea de su
+      // menor ya hecha al entrar con su cuenta. Vaciar es la opción honesta: el peor
+      // caso es un cambio perdido, que no es lo mismo que cambiar algo de otra cuenta.
+      await vaciar().catch(() => {});
     }
   };
 

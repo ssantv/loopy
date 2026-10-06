@@ -266,6 +266,20 @@ export default function Home() {
     void load();
   }, [load]);
 
+  // Cuando la cola de escrituras consigue mandar algo, lo que se ve aquí puede venir
+  // de un pintado optimista: hay que volver a preguntarlo. Se escucha el evento en vez
+  // de recargar la página, porque recargar tiraría la posición de la lista y, si hay
+  // un diálogo abierto, también lo que se hubiera escrito en él.
+  useEffect(() => {
+    const alGuardar = () => {
+      void load();
+      void loadDia();
+      void loadCarga();
+    };
+    window.addEventListener("loopy:datos-guardados", alGuardar);
+    return () => window.removeEventListener("loopy:datos-guardados", alGuardar);
+  }, [load, loadDia, loadCarga]);
+
   const groups = useMemo(() => {
     const hoy: Task[] = [];
     const hecho: Task[] = [];
@@ -317,21 +331,48 @@ export default function Home() {
     return oldest ? { kind: "task", task: oldest, overdue: true } : null;
   }, [groups, examPlanItems]);
 
+  /**
+   * Pinta en la lista lo que el usuario acaba de hacer, sin esperar al servidor.
+   *
+   * Solo se usa cuando la escritura se ha quedado en la cola. Recargar en ese momento
+   * sería lo contrario de lo que se quiere: la lectura sale de la caché, que aún no
+   * sabe nada del cambio, así que la tarea volvería a su estado anterior y el usuario
+   * vería que su pulsación no cuenta. Con esto la pantalla va por delante y cuando
+   * llegue la red el servidor confirmará lo mismo.
+   *
+   * Toca `done` y nada más a propósito: la carga del día y el reparto del estudio los
+   * calcula el backend, y fingirlos aquí daría unos minutos que no son los de verdad.
+   * Se corrigen solos cuando vuelva la red, al recargar.
+   */
+  const marcarEnPantalla = useCallback((task: Task, doneOn: string, hecho: boolean) => {
+    setTasks((ts) =>
+      ts.map((t) => {
+        if (t.id !== task.id) return t;
+        const done = hecho ? [...new Set([...t.done, doneOn])] : t.done.filter((d) => d !== doneOn);
+        return { ...t, done };
+      }),
+    );
+  }, []);
+
   const toggle = useCallback(
     async (task: Task, doneOn: string) => {
       const isDone = task.done.includes(doneOn);
       try {
-        if (isDone) {
-          await taskApi.undo(task.id, doneOn);
-        } else {
-          await taskApi.complete(task.id, doneOn);
+        const escrito = isDone ? await taskApi.undo(task.id, doneOn) : await taskApi.complete(task.id, doneOn);
+        if (escrito.estado === "fallo") {
+          setError("Sin conexión y sin almacenamiento: no se ha podido guardar el cambio.");
+          return;
+        }
+        if (escrito.estado === "encolada") {
+          marcarEnPantalla(task, doneOn, !isDone);
+          return;
         }
         await load();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Error al actualizar la tarea");
       }
     },
-    [load],
+    [load, marcarEnPantalla],
   );
 
   const togglePlan = useCallback(
@@ -437,8 +478,20 @@ export default function Home() {
         const [anio, mes, dia] = today.split("-").map(Number);
         const [h, m] = hueco.start.split(":");
         const cuando = new Date(anio, mes - 1, dia, Number(h), Number(m), 0, 0);
-        await taskApi.place(taskId, cuando, minutos);
+        const escrito = await taskApi.place(taskId, cuando, minutos);
+        if (escrito.estado === "fallo") {
+          // El diálogo se queda abierto a propósito: si el usuario cierra y se le ha
+          // perdido la colocación, no tiene forma de saberlo ni de reintentarlo.
+          setError("Sin conexión y sin almacenamiento: no se ha podido colocar la tarea.");
+          return;
+        }
         setColocarEn(null);
+        if (escrito.estado === "encolada") {
+          // Sin red no se recarga nada. Se cierra el diálogo y avisa el banner; la
+          // línea del día se recalculará sola cuando la colocación llegue al servidor,
+          // porque los huecos los recorta el backend y aquí no se pueden calcular.
+          return;
+        }
         // Igual que con las citas: la colocación mueve el bloque, los huecos y los
         // minutos de la carga, y los tres salen del backend a la vez.
         await Promise.all([loadDia(), loadCarga(), load()]);
@@ -452,7 +505,12 @@ export default function Home() {
   const quitarTarea = useCallback(
     async (taskId: number) => {
       try {
-        await taskApi.unplace(taskId);
+        const escrito = await taskApi.unplace(taskId);
+        if (escrito.estado === "fallo") {
+          setError("Sin conexión y sin almacenamiento: no se ha podido quitar la tarea.");
+          return;
+        }
+        if (escrito.estado === "encolada") return;
         await Promise.all([loadDia(), loadCarga(), load()]);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Error al quitar la tarea");

@@ -171,18 +171,60 @@ export default function Calendario() {
     });
   }, [mode]);
 
+  /**
+   * Marca en el propio calendario lo que se acaba de hacer sin red.
+   *
+   * El calendario es una vista plana de `data.days`, así que el cambio optimista se
+   * puede hacer en la copia sin tocar el servidor: si está en `done`, se añade a la
+   * lista de hechas de ese día; si se quita, se va. Es el mismo criterio que usa
+   * Mi día, y a propósito no calcula nada más: las horas de este cálculo son del
+   * backend y aquí no hay forma de acertar.
+   */
+  // Aquí `CalendarTask.done` es un booleano, no la lista de fechas de `Task`: en el
+// calendario cada tarea ya viene resuelta para el día que se está pintando. Por eso
+// el cambio optimista es solo ponerlo a `true` o a `false`, y no hay nada que quitar
+// de una lista.
+  const marcarEnPantalla = useCallback((task: CalendarTask, dateISO: string, hecho: boolean) => {
+    setData((d) => {
+      if (!d) return d;
+      const dia = d.days[dateISO];
+      if (!dia) return d;
+      return {
+        ...d,
+        days: {
+          ...d.days,
+          [dateISO]: { ...dia, tasks: dia.tasks.map((t) => (t.id === task.id ? { ...t, done: hecho } : t)) },
+        },
+      };
+    });
+  }, []);
+
   const toggleTask = useCallback(
     async (task: CalendarTask, dateISO: string, done: boolean) => {
       try {
-        if (done) await taskApi.undo(task.id, dateISO);
-        else await taskApi.complete(task.id, dateISO);
+        const escrito = done ? await taskApi.undo(task.id, dateISO) : await taskApi.complete(task.id, dateISO);
+        if (escrito.estado === "fallo") {
+          setError("Sin conexión y sin almacenamiento: no se ha podido guardar el cambio.");
+          return;
+        }
+        if (escrito.estado === "encolada") {
+          marcarEnPantalla(task, dateISO, !done);
+          return;
+        }
         await load();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Error al actualizar la tarea");
       }
     },
-    [load],
+    [load, marcarEnPantalla],
   );
+
+  // Cuando la cola mande algo, lo pintado aquí era provisional.
+  useEffect(() => {
+    const alGuardar = () => void load();
+    window.addEventListener("loopy:datos-guardados", alGuardar);
+    return () => window.removeEventListener("loopy:datos-guardados", alGuardar);
+  }, [load]);
 
   const togglePlan = useCallback(
     async (examId: number, dateISO: string, status: "done" | "skip" | null) => {
